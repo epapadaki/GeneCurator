@@ -11,7 +11,7 @@ authors:
     affiliation: "Ionian University"
 version: "1.0.0"
 license: "MIT"
-repository-code: "https://github.com/<username>/GeneCurator"
+repository-code: "https://github.com/epapadaki/GeneCurator"
 keywords:
   - gene panel curation
   - feature selection
