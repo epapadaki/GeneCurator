@@ -1,0 +1,708 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="docs-page grid grid-cols-[240px_1fr] min-h-[600px]">
+
+  {# ===== SIDEBAR NAVIGATION ===== #}
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar-label">Contents</div>
+    <nav>
+      <a href="#abstract" class="docs-nav-link">Abstract</a>
+      <a href="#background" class="docs-nav-link">§1  Background and motivation</a>
+      <a href="#workflow" class="docs-nav-link">§2  Analytical workflow</a>
+      <a href="#step1" class="docs-nav-sublink">2.1  Data input</a>
+      <a href="#step2" class="docs-nav-sublink">2.2  Feature selection</a>
+      <a href="#step3" class="docs-nav-sublink">2.3  Expert curation</a>
+      <a href="#step4" class="docs-nav-sublink">2.4  Downstream analysis</a>
+      <a href="#methods" class="docs-nav-link">§3  Methods</a>
+      <a href="#methods-algo" class="docs-nav-sublink">3.1  Feature-selection algorithms</a>
+      <a href="#methods-agent" class="docs-nav-sublink">3.2  LLM curation assistant</a>
+      <a href="#methods-lr" class="docs-nav-sublink">3.3  Ligand–receptor annotation</a>
+      <a href="#methods-enrich" class="docs-nav-sublink">3.4  Enrichment analysis</a>
+      <a href="#methods-ppi" class="docs-nav-sublink">3.5  Protein–protein interactions</a>
+      <a href="#methods-uniprot" class="docs-nav-sublink">3.6  Per-gene evidence</a>
+      <a href="#data" class="docs-nav-link">§4  Data requirements</a>
+    </nav>
+  </aside>
+
+  {# ===== CONTENT ===== #}
+  <article class="docs-article">
+
+    {# --- Header --- #}
+    <header class="docs-header">
+      <div class="docs-header-eyebrow">Reference Documentation</div>
+      <h1 class="docs-title">GeneCurator: Human-in-the-Loop Gene Selector</h1>
+      <p class="docs-subtitle">A guided reference to the analytical workflow, methods, and design rationale.</p>
+      <div class="docs-header-meta">
+        <span>BiHELab · Department of Informatics · Ionian University</span>
+      </div>
+    </header>
+
+    {# --- Abstract --- #}
+    <section id="abstract" class="docs-section">
+      <h2 class="docs-h2">Abstract</h2>
+      <p class="docs-p docs-p-lead">
+        GeneCurator is a web-based analytical framework for gene panel selection from
+        differential expression data. The tool combines algorithmic feature ranking
+        with structured expert oversight, addressing a well-documented limitation of
+        purely automated ranking approaches: statistical significance does not, by
+        itself, ensure biological interpretability. The application implements a
+        four-step wizard workflow — data input, algorithmic ranking, expert curation,
+        and downstream annotation — augmented by an optional large-language-model
+        curation assistant and a ligand–receptor annotation module. This document
+        describes the workflow, methods, and design rationale in detail.
+      </p>
+    </section>
+
+    {# --- 1. Background --- #}
+    <section id="background" class="docs-section">
+      <h2 class="docs-h2">§1  Background and motivation</h2>
+
+      <p class="docs-p">
+        Feature selection in transcriptomic studies is typically framed as a purely
+        statistical problem: rank genes by a differential expression measure, apply
+        a significance threshold or an importance criterion, and retain the top
+        candidates for downstream analysis. This framing has clear advantages —
+        reproducibility, computational efficiency, and transparent decision rules —
+        but it collapses biological context into a single number. Consequently,
+        automated rankings frequently promote genes with strong statistical signal
+        but limited disease relevance: pseudogenes and non-coding RNAs are
+        difficult to interpret, immunoglobulin variable regions reflect
+        infiltrating lymphocytes rather than tumor-intrinsic biology, and adipocyte
+        markers may reflect tissue composition rather than the process under study.
+      </p>
+
+      <p class="docs-p">
+        Manual curation by a domain expert can address these limitations by
+        incorporating literature evidence, tissue specificity, and clinical
+        actionability into panel design. In practice, however, purely manual
+        curation is slow, difficult to reproduce, and prone to reviewer-specific
+        bias. The two extremes therefore represent complementary rather than
+        substitutable approaches. GeneCurator was designed to bridge them: the
+        tool preserves the reproducibility of algorithmic ranking while exposing
+        each ranking to structured, per-gene human oversight.
+      </p>
+
+      <p class="docs-p">
+        The design draws on a broader literature concerning human-in-the-loop
+        machine learning, in which model outputs serve as structured hypotheses
+        for human review rather than final decisions. In the biomedical context,
+        this pattern has been described in the interpretation of imaging,
+        variant classification, and pathway analysis. Applied here, the pattern
+        yields a transcript-selection workflow in which the algorithm proposes,
+        the expert disposes, and every decision is auditable.
+      </p>
+    </section>
+
+    {# --- 2. Workflow --- #}
+    <section id="workflow" class="docs-section">
+      <h2 class="docs-h2">§2  Analytical workflow</h2>
+
+      <p class="docs-p">
+        The application implements a four-step wizard in which each step exposes
+        the outputs of the previous one and prepares the inputs for the next.
+        Figure 1 summarises the pipeline.
+      </p>
+
+      <figure class="docs-figure">
+        <img src="/static/img/workflow.svg" alt="Analytical workflow diagram">
+      </figure>
+
+      <div id="step1" class="docs-subsection">
+        <h3 class="docs-h3">2.1  Data input</h3>
+        <p class="docs-p">
+          The user provides an expression matrix in delimited text
+          format (CSV, TSV, or whitespace-separated .txt), together with a
+          sample metadata table. In the expression matrix the rows are
+          samples and the columns are genes, with the first column holding
+          the sample identifier. The metadata table has one row per sample
+          and provides a sample identifier column and a group column, for
+          example tumour or normal. The delimiter and encoding are
+          auto-detected, the sample identifiers are matched between the two
+          files, and the two groups to compare are read from the group
+          column. From these inputs the application computes the per-gene
+          differential statistics between the groups, which supply the
+          p-value and the log-2 fold change used by the threshold method and
+          by the plots. A synthetic sample-level example and a real
+          TCGA-BRCA expression matrix are bundled with the application to
+          allow immediate evaluation.
+        </p>
+      </div>
+
+      <div id="step2" class="docs-subsection">
+        <h3 class="docs-h3">2.2  Feature selection</h3>
+        <p class="docs-p">
+          Six algorithms are available. The choice depends on the structure of
+          the input signal and the analyst's downstream intent. Each algorithm
+          produces a ranked list of genes and an importance score. The
+          ranking is capped at a user-specified panel size (default: 50 genes)
+          to keep the output tractable for expert review.
+        </p>
+        <p class="docs-p">
+          Algorithm-specific details are given in §3.1.
+        </p>
+      </div>
+
+      <div id="step3" class="docs-subsection">
+        <h3 class="docs-h3">2.3  Expert curation</h3>
+        <p class="docs-p">
+          The curation stage presents the ranked candidate list alongside a
+          gene inspector that surfaces functional annotation, disease
+          association, and expression context for any selected gene. The
+          reviewer may exclude candidates from the panel (typically because
+          they are non-specific, redundant, or functionally uncertain) and may
+          add genes that are present in the dataset but were not proposed by
+          the algorithm (typically canonical biomarkers or clinically
+          actionable targets). Every inclusion and exclusion is recorded and
+          exported alongside the final panel.
+        </p>
+        <p class="docs-p">
+          An optional LLM curation assistant (§3.2) may be invoked at any point
+          during curation. Its role is advisory: it produces structured
+          suggestions with per-gene rationales, which the reviewer accepts or
+          rejects individually.
+        </p>
+      </div>
+
+      <div id="step4" class="docs-subsection">
+        <h3 class="docs-h3">2.4  Downstream analysis</h3>
+        <p class="docs-p">
+          The curated panel is passed to a suite of interpretive modules
+          organised as tabs. Discovery summary provides a volcano plot of the
+          full dataset overlaid with algorithm picks and expert-curated
+          selections. The protein–protein interaction (PPI) tab constructs a
+          subnetwork from STRING using the curated panel as seed nodes.
+          Enrichment analysis (§3.4) tests the panel against fifteen reference
+          libraries spanning pathways, ontology, diseases, cell types, and
+          drug signatures. The ligand–receptor annotation tab (§3.3) flags
+          panel members that appear in a curated LR database. The Log-2FC
+          profile provides a compact ranked view of expression magnitude
+          across the panel.
+        </p>
+      </div>
+    </section>
+
+    {# --- 3. Methods --- #}
+    <section id="methods" class="docs-section">
+      <h2 class="docs-h2">§3  Methods</h2>
+
+      <div id="methods-algo" class="docs-subsection">
+        <h3 class="docs-h3">3.1  Feature-selection algorithms</h3>
+        <p class="docs-p">
+          Six algorithms are implemented. Together they span the standard
+          feature-selection archetypes used in transcriptomic studies:
+          threshold-based selection, ensemble tree importance, regularised
+          regression, and kernel-based selection. A method guide in the
+          interface describes, in plain language, the assumptions of each
+          method and the data conditions under which it fits, so that the
+          user can match the method to the size and the signal of the
+          dataset. The choice of method remains with the user.
+        </p>
+
+        <table class="docs-table">
+          <thead>
+            <tr>
+              <th>Algorithm</th>
+              <th>Type</th>
+              <th>Principle</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Traditional DEG (Volcano)</td>
+              <td>Threshold</td>
+              <td>Genes above a user-defined significance and effect-size cut-off, ranked by −log<sub>10</sub>(p).</td>
+            </tr>
+            <tr>
+              <td>Random Forest</td>
+              <td>Ensemble</td>
+              <td>Impurity-based importance from a bootstrap-averaged decision tree ensemble.</td>
+            </tr>
+            <tr>
+              <td>Gradient Boosting</td>
+              <td>Ensemble</td>
+              <td>Sequentially fitted boosted trees; feature importance from cumulative split gain.</td>
+            </tr>
+            <tr>
+              <td>LASSO (L1)</td>
+              <td>Regularised regression</td>
+              <td>L1-regularised logistic regression on the group contrast; non-zero coefficients define the panel.</td>
+            </tr>
+            <tr>
+              <td>Elastic Net (L1+L2)</td>
+              <td>Regularised regression</td>
+              <td>Elastic-net-regularised logistic regression; combined L1 and L2 penalties for correlated-feature stability.</td>
+            </tr>
+            <tr>
+              <td>SVM + RFE</td>
+              <td>Kernel</td>
+              <td>Linear support-vector classifier with recursive feature elimination; genes ranked by the effect of their removal on group separation.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p class="docs-p">
+          Implementations use scikit-learn 1.4 for Random Forest, LASSO,
+          Elastic Net, and the support-vector classifier, and XGBoost 2.0 for
+          Gradient Boosting. Traditional DEG selection is implemented
+          natively. The five supervised methods treat gene selection as a
+          classification problem in which the samples are the observations
+          and the genes are the features, and they rank or select genes by
+          their contribution to separating the two sample groups. Random
+          Forest and Gradient Boosting use impurity-based feature importance,
+          LASSO and Elastic Net use the non-zero coefficients of a
+          regularised logistic regression, and the support-vector method uses
+          recursive feature elimination. The Traditional DEG method instead
+          applies fixed thresholds to the computed p-value and log-2 fold
+          change. The output is capped at the user's requested panel size,
+          which the user may modify at Step 2.
+        </p>
+      </div>
+
+      <div id="methods-agent" class="docs-subsection">
+        <h3 class="docs-h3">3.2  LLM curation assistant</h3>
+        <p class="docs-p">
+          An optional curation assistant leverages Google Gemini 2.5 Flash via
+          the Anthropic-style tool-use pattern. Given the current panel, the
+          top-ranked genes in the dataset, and a user-declared biological
+          context, the assistant returns a structured JSON payload with three
+          fields: a context summary, a set of removal suggestions (with
+          per-gene rationale), and a set of addition suggestions constrained
+          to canonical markers already present in the dataset.
+        </p>
+        <p class="docs-p">
+          Two prompt templates are used: the first treats the user-declared
+          context as ground truth, and the second is triggered when no
+          context is provided. In the latter case, the assistant is
+          instructed to infer the tissue type from the expression pattern
+          and to flag the inference as uncertain in its context summary.
+          Suggestions are shown in the interface as accept/reject cards;
+          no suggestion is applied without explicit user confirmation.
+          Temperature is set to 0.2 to encourage consistent, conservative
+          output.
+        </p>
+        <p class="docs-p">
+          The assistant is advisory and does not replace expert review. Its
+          role in the workflow is to accelerate first-pass curation while
+          preserving the reviewer as the final decision authority.
+        </p>
+      </div>
+
+      <div id="methods-lr" class="docs-subsection">
+        <h3 class="docs-h3">3.3  Ligand–receptor annotation</h3>
+        <p class="docs-p">
+          The ligand–receptor annotation module annotates the curated panel
+          against a curated database of known human ligand–receptor pairs.
+          The database used is CellTalkDB (Shao <em>et al.</em>, 2020),
+          accessed via the LewisLab UCSD compendium. CellTalkDB contains
+          3,398 human LR pairs derived from manual curation of primary
+          literature, with each pair linked to a PubMed identifier.
+        </p>
+        <p class="docs-p">
+          For a given curated panel, the module returns four categories of
+          annotation:
+        </p>
+        <ol class="docs-ol">
+          <li>Panel members with a known ligand or receptor role;</li>
+          <li>Complete LR pairs entirely contained within the panel;</li>
+          <li>Partial pairs in which a receptor is in the panel and its known ligand is present in the dataset but excluded;</li>
+          <li>Partial pairs in which a ligand is in the panel and its known receptor is present in the dataset but excluded.</li>
+        </ol>
+        <p class="docs-p">
+          Each partial-pair entry exposes an inline action that adds the
+          cognate partner to the panel and re-triggers the annotation.
+          This design extends the human-in-the-loop paradigm to
+          cell-communication considerations.
+        </p>
+        <p class="docs-p docs-p-note">
+          <em>Note.</em> This module provides annotation only. It does not
+          infer cell-cell communication events, which require
+          single-cell-resolution data. It answers the narrower question of
+          which panel members are catalogued as signalling molecules and
+          which known pairs are jointly represented.
+        </p>
+      </div>
+
+      <div id="methods-enrich" class="docs-subsection">
+        <h3 class="docs-h3">3.4  Enrichment analysis</h3>
+        <p class="docs-p">
+          Enrichment analysis is performed via the Enrichr web service
+          (Chen <em>et al.</em>, 2013; Kuleshov <em>et al.</em>, 2016).
+          Fifteen libraries are queried in parallel and organised across
+          five conceptual tabs.
+        </p>
+
+        <table class="docs-table">
+          <thead>
+            <tr>
+              <th>Tab</th>
+              <th>Libraries</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Pathways</td>
+              <td>KEGG 2026, Reactome 2024, WikiPathways 2024, BioPlanet, MSigDB Hallmark</td>
+            </tr>
+            <tr>
+              <td>Ontology</td>
+              <td>GO Biological Process 2026, GO Molecular Function 2026, GO Cellular Component 2026</td>
+            </tr>
+            <tr>
+              <td>Diseases</td>
+              <td>DisGeNET, OMIM Disease, Rare Diseases GeneRIF</td>
+            </tr>
+            <tr>
+              <td>Cell types</td>
+              <td>PanglaoDB Augmented 2021, Human Gene Atlas</td>
+            </tr>
+            <tr>
+              <td>Drugs</td>
+              <td>DSigDB, Drug Perturbations from GEO (up / down)</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p class="docs-p">
+          Each library returns terms ranked by Fisher's exact-test p-value
+          with Benjamini–Hochberg-adjusted q-values (FDR). Terms with FDR
+          below 0.25 are highlighted; terms with FDR below 0.05 are
+          emphasised as high-confidence associations. KEGG pathways include
+          a rendered pathway diagram with panel genes highlighted, retrieved
+          from the KEGG REST API.
+        </p>
+      </div>
+
+      <div id="methods-ppi" class="docs-subsection">
+        <h3 class="docs-h3">3.5  Protein–protein interactions</h3>
+        <p class="docs-p">
+          The PPI network is constructed by querying the STRING v12 database
+          for interactions among the curated panel members. The default
+          confidence threshold is 0.4 (medium), which corresponds to
+          STRING's standard threshold for interactome exploration. Edges
+          combine evidence from experimental, database, coexpression, and
+          text-mining channels. The resulting subgraph is rendered with a
+          spring-embedded layout in the browser.
+        </p>
+      </div>
+
+      <div id="methods-uniprot" class="docs-subsection">
+        <h3 class="docs-h3">3.6  Per-gene evidence</h3>
+        <p class="docs-p">
+          For any selected gene the interface displays functional annotation
+          retrieved from UniProt (function, disease involvement, subcellular
+          location) and a link to the corresponding UniProt entry. This
+          evidence panel appears alongside the ranked candidate list at
+          Step 3 and is the primary source of biological context during
+          expert curation.
+        </p>
+      </div>
+    </section>
+
+    {# --- 4. Data requirements --- #}
+    <section id="data" class="docs-section">
+      <h2 class="docs-h2">§4  Data requirements</h2>
+
+      <p class="docs-p">
+        The tool accepts an expression matrix from any standard bulk RNA-seq
+        or microarray pipeline, together with a sample metadata table that
+        assigns each sample to a group. Values should be on a normalised,
+        roughly log-scale (for example log-2 counts per million); raw counts
+        are flagged so that the user can apply a log transform. The required
+        structure of the two files is described in Table 3.
+      </p>
+
+      <table class="docs-table">
+        <thead>
+          <tr>
+            <th>File</th>
+            <th>Content</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Expression matrix</td>
+            <td>Samples in rows, genes in columns; first column is the sample identifier</td>
+            <td>Gene columns use HGNC symbols (preferred) for direct annotation lookup; the remaining values are numeric expression levels.</td>
+          </tr>
+          <tr>
+            <td>Sample metadata</td>
+            <td>One row per sample: a sample identifier column and a group column</td>
+            <td>The group column defines the contrast, for example tumour versus normal; at least two samples per group are required.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p class="docs-p">
+        From these inputs the application computes the per-gene p-value and
+        log-2 fold change between the two groups, so a pre-computed
+        differential expression table is not required. The tool is
+        species-agnostic in its statistical stages but the enrichment
+        libraries, PPI database, and LR annotation are all human-specific.
+        Non-human inputs will pass through the pipeline but will typically
+        produce empty or misleading downstream annotations.
+      </p>
+    </section>
+
+    <footer class="docs-footer">
+      <p>
+        GeneCurator · Bioinformatics and Human Electrophysiology Laboratory ·
+        Ionian University, Corfu.
+      </p>
+    </footer>
+
+  </article>
+</div>
+
+{# ===== STYLES ===== #}
+<style>
+  /* ---- Overall page ---- */
+  .docs-page {
+    background: var(--bg-page);
+  }
+
+  /* ---- Sidebar ---- */
+  .docs-sidebar {
+    padding: 40px 20px;
+    border-right: 1px solid var(--border);
+    background: var(--bg-card-soft);
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    font-family: Georgia, "Times New Roman", serif;
+  }
+  .docs-sidebar-label {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-weight: 500;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+    padding-left: 10px;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+  .docs-nav-link {
+    display: block;
+    padding: 5px 10px;
+    font-size: 13px;
+    color: var(--text-body);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    transition: all 0.15s ease;
+    margin-bottom: 2px;
+  }
+  .docs-nav-link:hover {
+    color: var(--text-strong);
+    border-left-color: var(--text-muted);
+    background: rgba(0,0,0,0.02);
+  }
+  .docs-nav-sublink {
+    display: block;
+    padding: 3px 10px 3px 24px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    transition: all 0.15s ease;
+    margin-bottom: 1px;
+  }
+  .docs-nav-sublink:hover {
+    color: var(--text-body);
+    border-left-color: var(--text-faint);
+    background: rgba(0,0,0,0.015);
+  }
+
+  /* ---- Article ---- */
+  .docs-article {
+    padding: 60px 80px 100px 80px;
+    max-width: 780px;
+    font-family: Georgia, "Times New Roman", serif;
+    line-height: 1.75;
+    color: var(--text-body);
+  }
+
+  /* ---- Header block ---- */
+  .docs-header {
+    margin-bottom: 60px;
+    padding-bottom: 32px;
+    border-bottom: 1px solid var(--border);
+  }
+  .docs-header-eyebrow {
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    font-weight: 500;
+    margin-bottom: 12px;
+  }
+  .docs-title {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 34px;
+    line-height: 1.2;
+    font-weight: 500;
+    color: var(--text-strong);
+    letter-spacing: -0.015em;
+    margin-bottom: 14px;
+  }
+  .docs-subtitle {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--text-muted);
+    font-style: italic;
+    margin-bottom: 22px;
+  }
+  .docs-header-meta {
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 12px;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+  }
+
+  /* ---- Section blocks ---- */
+  .docs-section {
+    margin-bottom: 60px;
+    scroll-margin-top: 24px;
+  }
+  .docs-subsection {
+    margin-top: 32px;
+    scroll-margin-top: 24px;
+  }
+
+  /* ---- Typography ---- */
+  .docs-h2 {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 22px;
+    font-weight: 500;
+    color: var(--text-strong);
+    letter-spacing: -0.01em;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .docs-h3 {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--text-strong);
+    margin-bottom: 12px;
+    margin-top: 4px;
+    letter-spacing: -0.005em;
+  }
+  .docs-p {
+    font-size: 14.5px;
+    color: var(--text-body);
+    margin-bottom: 16px;
+    text-align: justify;
+    hyphens: auto;
+  }
+  .docs-p-lead {
+    font-size: 15.5px;
+    line-height: 1.7;
+    color: var(--text-strong);
+    font-style: italic;
+    text-align: left;
+    padding-left: 18px;
+    border-left: 2px solid var(--border);
+  }
+  .docs-p-note {
+    font-size: 13.5px;
+    color: var(--text-muted);
+    padding: 12px 16px;
+    background: var(--bg-inset);
+    border-left: 3px solid var(--text-faint);
+    text-align: left;
+  }
+  .docs-p-note em {
+    color: var(--text-strong);
+    font-weight: 500;
+  }
+
+  /* ---- Lists ---- */
+  .docs-ol {
+    font-size: 14.5px;
+    color: var(--text-body);
+    margin-bottom: 16px;
+    padding-left: 24px;
+    list-style-type: decimal;
+  }
+  .docs-ol li {
+    margin-bottom: 6px;
+    padding-left: 4px;
+  }
+
+  /* ---- Tables ---- */
+  .docs-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 12.5px;
+    margin: 20px 0 24px 0;
+    background: var(--bg-card);
+  }
+  .docs-table thead {
+    background: var(--bg-inset);
+  }
+  .docs-table th {
+    text-align: left;
+    padding: 10px 14px;
+    font-weight: 500;
+    color: var(--text-strong);
+    border-bottom: 1.5px solid var(--border);
+    font-size: 11.5px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+  .docs-table td {
+    padding: 10px 14px;
+    vertical-align: top;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-body);
+    line-height: 1.55;
+  }
+  .docs-table td:first-child {
+    font-weight: 500;
+    color: var(--text-strong);
+    white-space: nowrap;
+  }
+  .docs-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  /* ---- Figures ---- */
+  .docs-figure {
+    margin: 32px 0;
+    padding: 24px;
+    background: var(--bg-card-soft);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    text-align: center;
+  }
+  .docs-figure img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* ---- Footer ---- */
+  .docs-footer {
+    margin-top: 80px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 11.5px;
+    color: var(--text-muted);
+    text-align: center;
+    letter-spacing: 0.02em;
+  }
+
+  /* ---- Dark mode adjustments ---- */
+  html[data-theme="dark"] .docs-table {
+    background: var(--bg-card);
+  }
+  html[data-theme="dark"] .docs-figure {
+    background: var(--bg-inset);
+  }
+</style>
+{% endblock %}

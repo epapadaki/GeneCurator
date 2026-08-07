@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "GeneCurator"
+abstract: "A human-in-the-loop web application for constructing and curating gene panels from expression data."
+authors:
+  - family-names: "Papadaki"
+    given-names: "Eugenia"
+    affiliation: "Ionian University"
+  - family-names: "Vrahatis"
+    given-names: "Aristidis G."
+    affiliation: "Ionian University"
+version: "1.0.0"
+license: "MIT"
+repository-code: "https://github.com/<username>/GeneCurator"
+keywords:
+  - gene panel curation
+  - feature selection
+  - human-in-the-loop
+  - functional enrichment
+  - RNA-seq

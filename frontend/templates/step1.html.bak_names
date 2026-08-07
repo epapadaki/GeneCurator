@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block content %}
+<div x-data="step1">
+<div class="p-10 min-h-[480px]">
+
+  <div class="text-center mb-8">
+    <h1 class="text-[26px] font-bold text-gray-900 mb-2 tracking-tight">Data input</h1>
+    <p class="text-sm text-gray-500">Provide a differential expression table for feature selection analysis.</p>
+  </div>
+
+  {# Hero illustration + upload cards in 2-column layout #}
+  <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-6 items-center max-w-[1050px] mx-auto">
+
+    {# LEFT: hero illustration — centered horizontally in its column #}
+    <div class="flex justify-center">
+      <img src="/static/img/hero.svg" alt="Human-in-the-loop DNA curation"
+           class="w-full h-auto" style="max-width: 320px;">
+    </div>
+
+    {# RIGHT: upload + example dataset cards (2 cards, equal width) #}
+    <div class="grid grid-cols-2 gap-3">
+
+      {# Upload card #}
+      <div class="bg-white border border-dashed border-gray-400 rounded px-4 py-6 text-center transition hover:border-gray-600">
+        <div class="w-12 h-12 mx-auto mb-2.5 rounded flex items-center justify-center text-xl"
+             style="background: var(--bg-inset); color: var(--text-muted);">
+          <i class="ti ti-upload"></i>
+        </div>
+        <h3 class="text-sm font-semibold text-gray-900 mb-1">Upload dataset</h3>
+        <p class="text-[11px] text-gray-500 mb-2.5">CSV, TSV, or TXT format</p>
+        <div class="flex flex-wrap justify-center gap-1 mb-2.5">
+          <span class="gc-chip gc-chip-gray text-[10px]">.csv</span>
+          <span class="gc-chip gc-chip-gray text-[10px]">.tsv</span>
+          <span class="gc-chip gc-chip-gray text-[10px]">.txt</span>
+        </div>
+        <input type="file" accept=".csv,.tsv,.txt" class="hidden" x-ref="file"
+               @change="onFile($event)">
+        <button class="gc-btn-primary inline-flex items-center text-xs" @click="$refs.file.click()" :disabled="busy">
+          <i class="ti ti-folder-open mr-1"></i>
+          <span x-text="busy && busyKind==='upload' ? 'Uploading…' : 'Browse'"></span>
+        </button>
+      </div>
+
+      {# Example dataset card — radio selector for synthetic or TCGA-BRCA #}
+      <div class="bg-white border border-gray-300 rounded px-4 pt-6 pb-8 text-center transition hover:border-gray-500">
+        <div class="w-12 h-12 mx-auto mb-2.5 rounded flex items-center justify-center text-xl"
+             style="background: var(--bg-inset); color: var(--text-muted);">
+          <i class="ti ti-database"></i>
+        </div>
+        <h3 class="text-sm font-semibold text-gray-900 mb-3">Example dataset</h3>
+
+        {# Radio group — everything centered #}
+        <div class="space-y-2 mb-4">
+          <label class="flex items-center justify-center gap-2 cursor-pointer p-1.5 rounded hover:bg-gray-50">
+            <input type="radio" name="example" value="synthetic"
+                   x-model="exampleChoice"
+                   class="accent-gray-700 flex-shrink-0" :disabled="busy">
+            <div>
+              <div class="text-xs font-medium text-gray-900">Synthetic example</div>
+              <div class="text-[10px] text-gray-500 leading-tight">30-gene illustrative dataset for a quick end-to-end run.</div>
+            </div>
+          </label>
+          <label class="flex items-center justify-center gap-2 cursor-pointer p-1.5 rounded hover:bg-gray-50">
+            <input type="radio" name="example" value="tcga_brca"
+                   x-model="exampleChoice"
+                   class="accent-gray-700 flex-shrink-0" :disabled="busy">
+            <div>
+              <div class="text-xs font-medium text-gray-900">TCGA-BRCA</div>
+              <div class="text-[10px] text-gray-500 leading-tight">Tumor vs normal, 22,910 genes, DESeq2.</div>
+            </div>
+          </label>
+        </div>
+
+        <div>
+          <button class="gc-btn-primary inline-flex items-center text-xs" @click="loadExample()" :disabled="busy">
+            <i class="ti ti-player-play mr-1"></i>
+            <span x-text="busy && busyKind==='example' ? 'Loading…' : 'Load selected'"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# Column mapping — shown after upload/demo loaded #}
+  <div x-show="dataLoaded" x-cloak class="max-w-[900px] mx-auto mt-8">
+    <div class="gc-section-label">Column mapping</div>
+    <div class="gc-card p-5 grid grid-cols-3 gap-4">
+      <div>
+        <label class="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Gene symbol</label>
+        <select x-model="mapping.g_col" @change="saveMapping()"
+                class="w-full border border-gray-200 rounded-md px-3 py-2 text-sm">
+          <template x-for="c in columns" :key="c"><option :value="c" x-text="c"></option></template>
+        </select>
+      </div>
+      <div>
+        <label class="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">P-value</label>
+        <select x-model="mapping.p_col" @change="saveMapping()"
+                class="w-full border border-gray-200 rounded-md px-3 py-2 text-sm">
+          <template x-for="c in columns" :key="c"><option :value="c" x-text="c"></option></template>
+        </select>
+      </div>
+      <div>
+        <label class="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Log2 fold change</label>
+        <select x-model="mapping.fc_col" @change="saveMapping()"
+                class="w-full border border-gray-200 rounded-md px-3 py-2 text-sm">
+          <template x-for="c in columns" :key="c"><option :value="c" x-text="c"></option></template>
+        </select>
+      </div>
+    </div>
+    <p class="text-xs text-gray-500 mt-2"><span x-text="filename"></span> · <span x-text="rows"></span> rows loaded</p>
+  </div>
+
+  {# Format info + requirements #}
+  <div class="max-w-[900px] mx-auto mt-8">
+    <div class="gc-card-soft p-5">
+      <div class="flex items-start gap-3.5">
+        <div class="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 text-xl flex-shrink-0">
+          <i class="ti ti-info-circle"></i>
+        </div>
+        <div class="flex-1">
+          <div class="text-sm font-semibold text-gray-900 mb-2">Supported data formats</div>
+          <div class="grid grid-cols-3 gap-4">
+            <div>
+              <div class="text-xs font-semibold text-gray-700 mb-1">Bulk RNA-seq</div>
+              <div class="text-[11px] text-gray-500">Summary stats: gene, log2FC, p-value</div>
+            </div>
+            <div>
+              <div class="text-xs font-semibold text-gray-700 mb-1">Microarray</div>
+              <div class="text-[11px] text-gray-500">Differential expression results</div>
+            </div>
+            <div>
+              <div class="text-xs font-semibold text-gray-700 mb-1">scRNA-seq</div>
+              <div class="text-[11px] text-gray-500">Pseudobulk DE outputs (.csv / .tsv)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="grid grid-cols-3 gap-3 mt-4">
+      <div class="gc-card p-4 flex items-center gap-3">
+        <div class="w-8 h-8 bg-emerald-50 text-emerald-500 rounded-lg flex items-center justify-center"><i class="ti ti-table"></i></div>
+        <div><div class="text-xs font-semibold">Tabular file</div><div class="text-[11px] text-gray-500">CSV, TSV, or TXT</div></div>
+      </div>
+      <div class="gc-card p-4 flex items-center gap-3">
+        <div class="w-8 h-8 bg-indigo-50 text-indigo-500 rounded-lg flex items-center justify-center"><i class="ti ti-tags"></i></div>
+        <div><div class="text-xs font-semibold">P-value column</div><div class="text-[11px] text-gray-500">Statistical significance</div></div>
+      </div>
+      <div class="gc-card p-4 flex items-center gap-3">
+        <div class="w-8 h-8 bg-amber-50 text-amber-500 rounded-lg flex items-center justify-center"><i class="ti ti-dna"></i></div>
+        <div><div class="text-xs font-semibold">Log2 fold change</div><div class="text-[11px] text-gray-500">Effect size column</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Action bar #}
+<div class="gc-actionbar">
+  <span></span>
+  <button class="gc-btn-primary" :disabled="!dataLoaded" @click="next()">
+    Continue <i class="ti ti-arrow-right ml-1.5"></i>
+  </button>
+</div>
+</div>{# end x-data="step1" wrapper #}
+{% endblock %}

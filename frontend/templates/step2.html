@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block content %}
+<div x-data="step2" class="min-h-[480px]">
+  <div class="grid grid-cols-[320px_1fr] min-h-[520px]">
+
+    {# LEFT: data summary panel #}
+    <aside class="bg-white p-6 border-r border-gray-200">
+      <div class="gc-section-label">Loaded data</div>
+      <div class="gc-card-soft p-3.5">
+        <div class="flex items-center gap-2 mb-3">
+          <i class="ti ti-file-check" style="color: var(--text-muted); font-size: 15px;"></i>
+          <div class="text-[13px] font-medium text-gray-900 truncate" x-text="state.filename || 'dataset.csv'"></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3 pt-2 border-t" style="border-color: var(--border);">
+          <div>
+            <div class="text-[10px] text-gray-500 mb-0.5" style="letter-spacing: 0.04em;"
+                 x-text="state.data_mode === 'expression_matrix' ? 'Genes' : 'Genes'"></div>
+            <div class="text-base text-gray-900 tabular-nums" style="font-weight: 400;"
+                 x-text="state.data_mode === 'expression_matrix' ? (state.columns?.length || 0) : (state.rows || 0)"></div>
+          </div>
+          <div>
+            <div class="text-[10px] text-gray-500 mb-0.5" style="letter-spacing: 0.04em;"
+                 x-text="state.data_mode === 'expression_matrix' ? 'Samples' : 'p < 0.05'"></div>
+            <div class="text-base text-gray-900 tabular-nums" style="font-weight: 400;"
+                 x-text="state.data_mode === 'expression_matrix' ? (state.rows || 0) : (state.direction?.significant || 0)"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-6 gc-section-label" x-text="state.data_mode === 'expression_matrix' ? 'Group Comparison' : 'Column Mapping'">Group Comparison</div>
+      <div class="gc-card-soft p-4 text-xs space-y-1.5" x-show="state.data_mode !== 'expression_matrix'">
+        <div><span class="text-gray-500">Gene symbol:</span> <b class="text-gray-900" x-text="state.mapping?.g_col || '—'"></b></div>
+        <div><span class="text-gray-500">P-value:</span> <b class="text-gray-900" x-text="state.mapping?.p_col || '—'"></b></div>
+        <div><span class="text-gray-500">Log2FC:</span> <b class="text-gray-900" x-text="state.mapping?.fc_col || '—'"></b></div>
+      </div>
+      <div class="gc-card-soft p-4 text-xs space-y-1.5" x-show="state.data_mode === 'expression_matrix'" x-cloak>
+        <div><span class="text-gray-500">Comparison:</span>
+          <b class="text-gray-900" x-text="state.group_a || '—'"></b>
+          <span class="text-gray-400">vs</span>
+          <b class="text-gray-900" x-text="state.group_b || '—'"></b>
+        </div>
+        <div><span class="text-gray-500">Stats source:</span> <b class="text-gray-900">per-sample t-test</b></div>
+      </div>
+
+      <div class="mt-6 gc-section-label">Direction Split</div>
+      <div class="gc-card-soft p-4 space-y-3">
+        <template x-if="state.direction">
+          <div class="space-y-3">
+            <div>
+              <div class="flex items-center gap-2 mb-2">
+                <div class="w-3 h-3 bg-indigo-500 rounded-sm"></div>
+                <span class="text-xs text-gray-900 flex-1">Up-regulated</span>
+                <span class="text-xs font-semibold text-gray-900 tabular-nums" x-text="state.direction.up"></span>
+              </div>
+              <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
+                <div class="h-full bg-indigo-500" :style="`width: ${barPct(state.direction.up)}%`"></div>
+              </div>
+            </div>
+            <div>
+              <div class="flex items-center gap-2 mb-2">
+                <div class="w-3 h-3 bg-pink-500 rounded-sm"></div>
+                <span class="text-xs text-gray-900 flex-1">Down-regulated</span>
+                <span class="text-xs font-semibold text-gray-900 tabular-nums" x-text="state.direction.down"></span>
+              </div>
+              <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
+                <div class="h-full bg-pink-500" :style="`width: ${barPct(state.direction.down)}%`"></div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </aside>
+
+    {# RIGHT: algorithm picker + params #}
+    <section class="bg-slate-50 p-7">
+      <div class="mb-5">
+        <div class="flex items-center gap-2 mb-1.5">
+          <h2 class="text-xl font-bold text-gray-900 tracking-tight">Choose method</h2>
+          {# Info icon — opens the global static method guide modal.
+             The modal itself lives in base.html (rendered at the top of
+             <body>) so its `position: fixed` refers to the viewport
+             rather than any transformed ancestor. #}
+          <button type="button" onclick="openMethodGuide()"
+                  class="inline-flex items-center justify-center w-6 h-6 rounded-full transition-colors"
+                  style="color: var(--text-muted); background: var(--bg-inset);"
+                  onmouseover="this.style.background='var(--bg-hover)'; this.style.color='var(--text-strong)'"
+                  onmouseout="this.style.background='var(--bg-inset)'; this.style.color='var(--text-muted)'"
+                  title="How to choose a method">
+            <i class="ti ti-info-circle" style="font-size: 14px;"></i>
+          </button>
+        </div>
+        <p class="text-[13px] text-gray-500">Choose a ranking method for candidate genes.</p>
+      </div>
+
+      {# Algo card grid #}
+      <div class="grid grid-cols-3 gap-3 mb-3">
+        {% for a in algorithms[:3] %}
+          <button class="gc-algo-card text-left relative"
+                  :class="[
+                    strategy === '{{ a.key }}' && 'gc-algo-card-selected',
+                    !isAvailable('{{ a.key }}') && 'opacity-40 cursor-not-allowed'
+                  ]"
+                  :disabled="!isAvailable('{{ a.key }}')"
+                  @click="pickStrategy('{{ a.key }}')">
+            <div x-show="strategy === '{{ a.key }}'" class="absolute top-3 right-3 w-5 h-5 bg-indigo-500 rounded-md flex items-center justify-center text-white">
+              <i class="ti ti-check"></i>
+            </div>
+            <div x-show="!isAvailable('{{ a.key }}')" x-cloak class="absolute top-3 right-3 text-gray-400" title="Needs an expression matrix">
+              <i class="ti ti-lock"></i>
+            </div>
+            <div class="gc-algo-icon" :class="strategy === '{{ a.key }}' ? 'gc-algo-icon-selected' : 'gc-algo-icon-idle'">
+              <i class="ti {{ a.icon }}"></i>
+            </div>
+            <div class="text-[14px] font-semibold text-gray-900 mb-0.5">{{ a.title }}</div>
+            <div class="text-[11px] text-gray-500 leading-snug">{{ a.desc }}</div>
+          </button>
+        {% endfor %}
+      </div>
+      <div class="grid grid-cols-3 gap-3 mb-6">
+        {% for a in algorithms[3:] %}
+          <button class="gc-algo-card text-left relative"
+                  :class="[
+                    strategy === '{{ a.key }}' && 'gc-algo-card-selected',
+                    !isAvailable('{{ a.key }}') && 'opacity-40 cursor-not-allowed'
+                  ]"
+                  :disabled="!isAvailable('{{ a.key }}')"
+                  @click="pickStrategy('{{ a.key }}')">
+            <div x-show="strategy === '{{ a.key }}'" class="absolute top-3 right-3 w-5 h-5 bg-indigo-500 rounded-md flex items-center justify-center text-white">
+              <i class="ti ti-check"></i>
+            </div>
+            <div x-show="!isAvailable('{{ a.key }}')" x-cloak class="absolute top-3 right-3 text-gray-400" title="Needs an expression matrix">
+              <i class="ti ti-lock"></i>
+            </div>
+            <div class="gc-algo-icon" :class="strategy === '{{ a.key }}' ? 'gc-algo-icon-selected' : 'gc-algo-icon-idle'">
+              <i class="ti {{ a.icon }}"></i>
+            </div>
+            <div class="text-[14px] font-semibold text-gray-900 mb-0.5">{{ a.title }}</div>
+            <div class="text-[11px] text-gray-500 leading-snug">{{ a.desc }}</div>
+          </button>
+        {% endfor %}
+      </div>
+
+      {# Notice shown only for legacy deg_table sessions #}
+      <div x-show="!hasMatrix" x-cloak class="mb-4 bg-slate-100 border border-slate-200 rounded-lg p-3.5 flex gap-3">
+        <i class="ti ti-info-circle text-slate-500 text-lg flex-shrink-0"></i>
+        <p class="text-xs text-slate-600 leading-relaxed">This session was loaded from a DEG summary table, so only <b>Traditional DEG</b> is available. To unlock the model-based methods, go back and load an expression matrix with sample groups.</p>
+      </div>
+
+      {# Parameters #}
+      <div class="gc-card p-5 mb-4">
+        <div class="text-sm font-semibold text-gray-900 mb-3">Parameters</div>
+        <div x-show="strategy === 'Traditional DEG (Volcano)'" class="grid grid-cols-2 gap-4">
+          <label class="block">
+            <span class="text-xs text-gray-500">P-value α</span>
+            <input type="range" min="0.001" max="0.10" step="0.001" x-model.number="p_thr"
+                   class="w-full accent-indigo-500">
+            <span class="text-xs font-semibold text-gray-900" x-text="p_thr.toFixed(3)"></span>
+          </label>
+          <label class="block">
+            <span class="text-xs text-gray-500">|log2FC| threshold</span>
+            <input type="range" min="0" max="5" step="0.1" x-model.number="fc_thr"
+                   class="w-full accent-indigo-500">
+            <span class="text-xs font-semibold text-gray-900" x-text="fc_thr.toFixed(1)"></span>
+          </label>
+        </div>
+        <div x-show="strategy !== 'Traditional DEG (Volcano)'" class="block">
+          <span class="text-xs text-gray-500">Number of top genes to select</span>
+          <input type="range" min="10" :max="Math.min(500, (state.data_mode === 'expression_matrix' ? (state.columns?.length||500) : (state.rows||500)))" step="5" x-model.number="top_n"
+                 class="w-full accent-indigo-500">
+          <span class="text-xs font-semibold text-gray-900" x-text="top_n"></span>
+        </div>
+      </div>
+
+      {# Tip #}
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3.5">
+        <div class="w-9 h-9 bg-amber-100 text-amber-600 rounded-lg flex items-center justify-center flex-shrink-0">
+          <i class="ti ti-bulb"></i>
+        </div>
+        <div>
+          <div class="text-xs font-semibold text-amber-900 mb-1">Tip</div>
+          <div class="text-xs text-amber-800 leading-relaxed">Different algorithms surface different gene panels. After running, you can curate the result by hand in the next step.</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  {# Action bar #}
+  <div class="gc-actionbar">
+    <button class="gc-btn-secondary" @click="back()">← Back</button>
+    <button class="gc-btn-primary" :disabled="busy" @click="run()">
+      <i class="ti ti-player-play mr-1.5"></i>
+      <span x-text="busy ? 'Running…' : 'Run Feature Selection'"></span>
+    </button>
+  </div>
+
+</div>
+{% endblock %}

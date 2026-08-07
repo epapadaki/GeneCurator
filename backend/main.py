@@ -1,0 +1,1144 @@
+"""
+GeneCurator FastAPI app.
+
+Routes:
+  GET  /                       → step 1 (data upload page)
+  GET  /step/{n}               → step n (1..4)
+  POST /api/load-toy           → load embedded toy dataset (DEG table only)
+  POST /api/load-toy-matrix    → load the synthetic sample-level twin of the
+                                  toy dataset (unlocks all 6 algorithms)
+  POST /api/upload             → upload a CSV/TSV/TXT DEG summary table (gene, p, fc)
+  POST /api/upload-matrix      → upload a real expression matrix + sample metadata
+                                  (required for genuine feature selection — see
+                                  algorithms.py's module docstring for why)
+  POST /api/columns            → set the gene/p-value/log2FC column mapping
+  GET  /api/columns/autodetect → suggest column mapping for the loaded data
+  GET  /api/recommend-algorithm → data-driven algorithm recommendation for Step 2
+  POST /api/strategy           → set algorithm + params
+  POST /api/run                → run the pipeline
+  GET  /api/state              → return current session state (JSON)
+  POST /api/curate             → set the rejected/added gene sets (HITL update)
+  GET  /api/gene/{symbol}      → gene details + UniProt evidence
+  GET  /api/plot/{kind}        → plotly figure JSON for tab {kind}
+  GET  /api/top-discoveries    → top 50 discoveries table for Step 4
+  GET  /api/export.xlsx        → Excel report of final panel
+  GET  /api/export.csv         → CSV of final panel
+  GET  /api/export-all.zip     → ZIP with panel report, all enrichment, LR annotation
+  POST /api/reset              → reset session (start over)
+  GET  /api/algorithms         → algorithm catalog
+
+  # ADDED for enrichment analysis:
+  GET  /api/enrichment/status       → which libraries are available
+  GET  /api/enrichment/{library}    → run enrichment against a library
+  GET  /api/kegg-map?term=...       → render a KEGG map with highlights
+"""
+
+from io import BytesIO
+from pathlib import Path
+from typing import Optional
+
+import pandas as pd
+from fastapi import Cookie, FastAPI, HTTPException, Request, Response, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+
+from . import data, plots, state, uniprot_local as uniprot
+from . import enrichment, kegg_maps                     # NEW: enrichment modules
+from . import algorithm_recommender
+from .algorithms import ALGORITHMS, REQUIRES_EXPRESSION_MATRIX
+from .pipeline import PipelineError, final_selection, run_pipeline
+
+
+# ---------- App setup ------------------------------------------------------
+ROOT = Path(__file__).resolve().parent.parent
+TEMPLATES_DIR = ROOT / "frontend" / "templates"
+STATIC_DIR = ROOT / "frontend" / "static"
+
+# NEW: where to look for the .txt Enrichr libraries and the KEGG PNG/KGML snapshot
+ENRICHR_DIR = ROOT                                # library .txt files sit next to run.py
+KEGG_DATA_DIR = ROOT / "kegg_data"                # created by download_kegg_assets.py
+
+app = FastAPI(title="GeneCurator", docs_url="/api/docs", redoc_url=None)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+SESSION_COOKIE = "genecurator_session"
+
+
+# ---------- Session helper -------------------------------------------------
+def _session(session_id: Optional[str]):
+    sid, sess = state.get_or_create(session_id)
+    return sid, sess
+
+
+def _set_cookie(response: Response, sid: str):
+    response.set_cookie(
+        SESSION_COOKIE, sid,
+        httponly=True, samesite="lax", max_age=60 * 60 * 24,
+    )
+
+
+# ---------- Page routes (server-rendered Jinja2 shells) --------------------
+@app.get("/", response_class=HTMLResponse)
+def root(request: Request, session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    sid, _ = _session(session)
+    response = templates.TemplateResponse(
+        request, "step1.html", {"step": 1}
+    )
+    _set_cookie(response, sid)
+    return response
+
+
+@app.get("/step/{n}", response_class=HTMLResponse)
+def step_page(n: int, request: Request,
+              session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    if n not in (1, 2, 3, 4):
+        raise HTTPException(404, "Step out of range")
+    sid, _ = _session(session)
+    template = f"step{n}.html"
+    response = templates.TemplateResponse(
+        request, template,
+        {"step": n, "algorithms": ALGORITHMS},
+    )
+    _set_cookie(response, sid)
+    return response
+
+
+@app.get("/docs", response_class=HTMLResponse)
+def docs_page(request: Request,
+              session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    # Documentation page — no session logic, no workflow state.
+    # `step=0` signals base.html to skip the progress bar.
+    sid, _ = _session(session)
+    response = templates.TemplateResponse(
+        request, "docs.html", {"step": 0}
+    )
+    _set_cookie(response, sid)
+    return response
+
+
+# ---------- API: data loading ---------------------------------------------
+@app.post("/api/load-toy")
+def api_load_toy(session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    sid, sess = _session(session)
+    df = data.load_toy_dataset()
+    sess.df_raw = df
+    sess.data_mode = "deg_table"
+    sess.expr_matrix = None
+    sess.sample_groups = None
+    sess.group_a = sess.group_b = None
+    sess.data_source = "demo"
+    sess.uploaded_filename = "Toy dataset (embedded)"
+    mapping = data.autodetect_columns(df)
+    sess.g_col = mapping["g_col"]
+    sess.p_col = mapping["p_col"]
+    sess.fc_col = mapping["fc_col"]
+    resp = JSONResponse({
+        "ok": True,
+        "rows": len(df),
+        "columns": list(df.columns),
+        "filename": sess.uploaded_filename,
+        "mapping": mapping,
+        "preview": df.head(10).to_dict(orient="records"),
+    })
+    _set_cookie(resp, sid)
+    return resp
+
+
+@app.post("/api/load-toy-matrix")
+def api_load_toy_matrix(session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    """Load the synthetic sample-level twin of the toy dataset — same 30
+    genes, same biological story (immune up / apoptosis down / housekeeping
+    flat), but as a real samples x genes matrix + condition labels, so this
+    one-click demo can showcase all six algorithms including genuine
+    feature selection (see data.load_toy_expression_matrix's docstring)."""
+    sid, sess = _session(session)
+    expr_df, meta_df = data.load_toy_expression_matrix()
+    expr_aligned, group_series, ga, gb = data.align_matrix_and_groups(
+        expr_df, meta_df, "sample_id", "condition"
+    )
+    sess.expr_matrix = expr_aligned
+    sess.sample_groups = {s: g for s, g in group_series.items()}
+    sess.group_a, sess.group_b = ga, gb
+    sess.data_mode = "expression_matrix"
+    sess.data_source = "demo_matrix"
+    sess.uploaded_filename = "Toy dataset (synthetic expression matrix)"
+    sess.df_raw = None
+    sess.g_col, sess.p_col, sess.fc_col = "gene_symbol", "p_value", "log2FC"
+    resp = JSONResponse({
+        "ok": True,
+        "filename": sess.uploaded_filename,
+        "n_samples": int(expr_aligned.shape[0]),
+        "n_genes": int(expr_aligned.shape[1]),
+        "group_a": ga,
+        "group_b": gb,
+    })
+    _set_cookie(resp, sid)
+    return resp
+
+
+# Case study — TCGA-BRCA tumor vs normal.
+# The DEG table is bundled with the app under data/. See the accompanying
+# `data/prepare_brca_deg.R` script for the canonical DESeq2 procedure that
+# produced it, or `data/generate_scaffold_deg.py` for the development scaffold.
+# Both scripts now ALSO produce a companion expression matrix + sample
+# metadata (TCGA_BRCA_expression_matrix.tsv / TCGA_BRCA_sample_metadata.tsv)
+# so this case study can demonstrate genuine feature selection too, not
+# just the Traditional DEG threshold. /api/load-use-case below loads the
+# matrix pair when present and falls back to DEG-table-only mode with a
+# clear note if it isn't (e.g. an older data/ folder that predates this).
+@app.post("/api/load-use-case")
+def api_load_use_case(session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    sid, sess = _session(session)
+
+    # Look for the case-study DEG in the project root — try both real and
+    # scaffold filenames.
+    case_paths = [
+        Path("data/TCGA_BRCA_tumor_vs_normal_DEG.tsv"),
+        Path("TCGA_BRCA_tumor_vs_normal_DEG.tsv"),
+    ]
+    case_file = next((p for p in case_paths if p.exists()), None)
+    if case_file is None:
+        raise HTTPException(
+            404,
+            "TCGA-BRCA case-study DEG table not found. Please place "
+            "TCGA_BRCA_tumor_vs_normal_DEG.tsv in the project root or the "
+            "data/ folder, or run data/prepare_brca_deg.R to generate it."
+        )
+
+    # Companion expression matrix + metadata, produced alongside the DEG
+    # table by the (updated) prepare_brca_deg.R / generate_scaffold_deg.py.
+    # Older data/ folders won't have these yet — that's fine, we just fall
+    # back to DEG-table-only mode rather than failing.
+    matrix_paths = [
+        Path("data/TCGA_BRCA_expression_matrix.tsv"),
+        Path("TCGA_BRCA_expression_matrix.tsv"),
+    ]
+    meta_paths = [
+        Path("data/TCGA_BRCA_sample_metadata.tsv"),
+        Path("TCGA_BRCA_sample_metadata.tsv"),
+    ]
+    matrix_file = next((p for p in matrix_paths if p.exists()), None)
+    meta_file = next((p for p in meta_paths if p.exists()), None)
+
+    if matrix_file is not None and meta_file is not None:
+        expr_df = data.parse_expression_matrix(matrix_file.read_bytes(), matrix_file.name)
+        meta_df = data.parse_sample_metadata(meta_file.read_bytes(), meta_file.name)
+        meta_mapping = data.autodetect_metadata_columns(meta_df)
+        expr_aligned, group_series, ga, gb = data.align_matrix_and_groups(
+            expr_df, meta_df, meta_mapping["id_col"], meta_mapping["group_col"],
+        )
+        sess.expr_matrix = expr_aligned
+        sess.sample_groups = {s: g for s, g in group_series.items()}
+        sess.group_a, sess.group_b = ga, gb
+        sess.data_mode = "expression_matrix"
+        sess.data_source = "case_study"
+        sess.uploaded_filename = "TCGA-BRCA · tumor vs normal (case study, expression matrix)"
+        sess.df_raw = None
+        sess.g_col, sess.p_col, sess.fc_col = "gene_symbol", "p_value", "log2FC"
+        resp = JSONResponse({
+            "ok": True,
+            "data_mode": "expression_matrix",
+            "n_samples": int(expr_aligned.shape[0]),
+            "n_genes": int(expr_aligned.shape[1]),
+            "group_a": ga,
+            "group_b": gb,
+            "filename": sess.uploaded_filename,
+        })
+        _set_cookie(resp, sid)
+        return resp
+
+    # Fallback: DEG-table-only mode. Only "Traditional DEG (Volcano)" will
+    # be available for this session until a matching expression matrix is
+    # generated (see prepare_brca_deg.R / generate_scaffold_deg.py).
+    df = pd.read_csv(case_file, sep="\t")
+    sess.df_raw = df
+    sess.data_mode = "deg_table"
+    sess.expr_matrix = None
+    sess.sample_groups = None
+    sess.group_a = sess.group_b = None
+    sess.data_source = "case_study"
+    sess.uploaded_filename = "TCGA-BRCA · tumor vs normal (case study)"
+    mapping = data.autodetect_columns(df)
+    sess.g_col = mapping["g_col"]
+    sess.p_col = mapping["p_col"]
+    sess.fc_col = mapping["fc_col"]
+    resp = JSONResponse({
+        "ok": True,
+        "data_mode": "deg_table",
+        "rows": len(df),
+        "columns": list(df.columns),
+        "filename": sess.uploaded_filename,
+        "mapping": mapping,
+        "preview": df.head(10).to_dict(orient="records"),
+        "note": (
+            "Loaded the DEG summary table only — no companion expression "
+            "matrix was found, so only 'Traditional DEG (Volcano)' is "
+            "available for this session. Run data/prepare_brca_deg.R (or "
+            "data/generate_scaffold_deg.py for a quick offline scaffold) "
+            "to also generate TCGA_BRCA_expression_matrix.tsv + "
+            "TCGA_BRCA_sample_metadata.tsv and unlock the other five."
+        ),
+    })
+    _set_cookie(resp, sid)
+    return resp
+
+
+@app.post("/api/upload")
+async def api_upload(file: UploadFile,
+                     session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    sid, sess = _session(session)
+    raw = await file.read()
+    try:
+        df = data.parse_uploaded(raw, file.filename or "data.csv")
+    except Exception as e:
+        raise HTTPException(400, f"Could not parse file: {e}")
+    sess.df_raw = df
+    sess.data_mode = "deg_table"
+    sess.expr_matrix = None
+    sess.sample_groups = None
+    sess.group_a = sess.group_b = None
+    sess.data_source = "upload"
+    sess.uploaded_filename = file.filename
+    mapping = data.autodetect_columns(df)
+    sess.g_col = mapping["g_col"]
+    sess.p_col = mapping["p_col"]
+    sess.fc_col = mapping["fc_col"]
+    resp = JSONResponse({
+        "ok": True,
+        "rows": len(df),
+        "columns": list(df.columns),
+        "filename": file.filename,
+        "mapping": mapping,
+        "preview": df.head(10).to_dict(orient="records"),
+    })
+    _set_cookie(resp, sid)
+    return resp
+
+
+# ---------- API: expression matrix upload (real feature selection) --------
+@app.post("/api/upload-matrix")
+async def api_upload_matrix(
+    expression_file: UploadFile,
+    metadata_file: UploadFile,
+    group_col: Optional[str] = None,
+    group_a: Optional[str] = None,
+    group_b: Optional[str] = None,
+    session: Optional[str] = Cookie(None, alias=SESSION_COOKIE),
+):
+    """Upload a real expression matrix + sample metadata, unlocking genuine
+    feature selection (Random Forest / Gradient Boosting / LASSO /
+    Elastic Net / linear SVM+RFE — see algorithms.py). This is the only
+    upload path that can back those five algorithms; a DEG summary table
+    alone (via /api/upload) only has enough information for the
+    "Traditional DEG (Volcano)" threshold method.
+
+    expression_file: samples x genes, first column = sample id (see
+        data.parse_expression_matrix for the expected shape).
+    metadata_file: one row per sample, a sample-id column, and a
+        categorical group/condition column (see data.parse_sample_metadata).
+    group_col: which metadata column to use as the group label. If
+        omitted, autodetected (common names like 'condition'/'group', or
+        the first categorical column with 2-10 unique values).
+    group_a / group_b: which two group labels to compare, if the metadata
+        has more than two. If omitted, the two most frequent labels among
+        matched samples are used.
+    """
+    sid, sess = _session(session)
+
+    expr_bytes = await expression_file.read()
+    meta_bytes = await metadata_file.read()
+
+    try:
+        expr_df = data.parse_expression_matrix(expr_bytes, expression_file.filename or "expression.csv")
+    except Exception as e:
+        raise HTTPException(400, f"Could not parse expression matrix: {e}")
+    try:
+        meta_df = data.parse_sample_metadata(meta_bytes, metadata_file.filename or "metadata.csv")
+    except Exception as e:
+        raise HTTPException(400, f"Could not parse sample metadata: {e}")
+
+    if expr_df.shape[1] == 0:
+        raise HTTPException(400, "No numeric gene columns found in the expression matrix.")
+
+    if data.looks_like_genes_by_samples(expr_df):
+        raise HTTPException(
+            400,
+            "This matrix looks like genes x samples (rows look like gene "
+            "symbols, columns look like sample names). Expected the "
+            "opposite orientation: samples as rows, genes as columns. "
+            "Transpose the file and re-upload."
+        )
+
+    meta_mapping = data.autodetect_metadata_columns(meta_df)
+    id_col = meta_mapping["id_col"]
+    resolved_group_col = group_col or meta_mapping["group_col"]
+    if resolved_group_col is None:
+        raise HTTPException(
+            400,
+            "Could not determine which metadata column to use as the group "
+            "label. Pass `group_col` explicitly."
+        )
+
+    try:
+        expr_aligned, group_series, resolved_a, resolved_b = data.align_matrix_and_groups(
+            expr_df, meta_df, id_col, resolved_group_col, group_a, group_b,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    warning = None
+    if data.looks_like_raw_counts(expr_aligned):
+        warning = (
+            "These values look like raw counts rather than log-normalized "
+            "expression (e.g. log2(CPM+1)). Feature selection and the "
+            "log2FC/p-value stats below assume roughly log-scale, "
+            "variance-stabilized input — consider re-normalizing before "
+            "uploading for more reliable results."
+        )
+
+    sess.expr_matrix = expr_aligned
+    sess.sample_groups = {s: g for s, g in group_series.items()}
+    sess.group_a, sess.group_b = resolved_a, resolved_b
+    sess.data_mode = "expression_matrix"
+    sess.data_source = "upload_matrix"
+    sess.uploaded_filename = f"{expression_file.filename} + {metadata_file.filename}"
+    sess.df_raw = None  # no DEG table in this mode; df_clean is derived at run time
+    sess.g_col, sess.p_col, sess.fc_col = "gene_symbol", "p_value", "log2FC"
+
+    resp = JSONResponse({
+        "ok": True,
+        "n_samples": int(expr_aligned.shape[0]),
+        "n_genes": int(expr_aligned.shape[1]),
+        "group_col": resolved_group_col,
+        "group_a": resolved_a,
+        "group_b": resolved_b,
+        "n_group_a": int((group_series == resolved_a).sum()),
+        "n_group_b": int((group_series == resolved_b).sum()),
+        "filename": sess.uploaded_filename,
+        "warning": warning,
+    })
+    _set_cookie(resp, sid)
+    return resp
+
+
+# ---------- API: column mapping -------------------------------------------
+class ColumnMapping(BaseModel):
+    g_col: str
+    p_col: str
+    fc_col: str
+
+
+@app.post("/api/columns")
+def api_columns(payload: ColumnMapping,
+                session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    sid, sess = _session(session)
+    if sess.data_mode == "expression_matrix":
+        raise HTTPException(
+            400,
+            "Column mapping is fixed for expression-matrix sessions "
+            "(gene_symbol/p_value/log2FC are derived automatically) and "
+            "isn't user-editable.",
+        )
+    if sess.df_raw is None:
+        raise HTTPException(400, "No data loaded")
+    cols = list(sess.df_raw.columns)
+    for col in (payload.g_col, payload.p_col, payload.fc_col):
+        if col not in cols:
+            raise HTTPException(400, f"Column {col!r} not found")
+    sess.g_col = payload.g_col
+    sess.p_col = payload.p_col
+    sess.fc_col = payload.fc_col
+    resp = JSONResponse({"ok": True})
+    _set_cookie(resp, sid)
+    return resp
+
+
+# ---------- API: strategy --------------------------------------------------
+class StrategyPayload(BaseModel):
+    strategy: str
+    top_n: Optional[int] = None
+    p_thr: Optional[float] = None
+    fc_thr: Optional[float] = None
+
+
+@app.post("/api/strategy")
+def api_strategy(payload: StrategyPayload,
+                 session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    sid, sess = _session(session)
+    valid_keys = {a["key"] for a in ALGORITHMS}
+    if payload.strategy not in valid_keys:
+        raise HTTPException(400, "Unknown strategy")
+    if payload.strategy in REQUIRES_EXPRESSION_MATRIX and sess.data_mode != "expression_matrix":
+        raise HTTPException(
+            400,
+            f"{payload.strategy!r} requires an expression matrix with "
+            "per-sample data (upload one via /api/upload-matrix in Step 1). "
+            "A DEG summary table alone only supports 'Traditional DEG (Volcano)'.",
+        )
+    sess.strategy = payload.strategy
+    if payload.top_n is not None:
+        sess.top_n = int(payload.top_n)
+    if payload.p_thr is not None:
+        sess.p_thr = float(payload.p_thr)
+    if payload.fc_thr is not None:
+        sess.fc_thr = float(payload.fc_thr)
+    resp = JSONResponse({"ok": True})
+    _set_cookie(resp, sid)
+    return resp
+
+
+# ---------- API: run pipeline ---------------------------------------------
+@app.post("/api/run")
+def api_run(session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    sid, sess = _session(session)
+    if sess.data_mode == "expression_matrix":
+        if sess.expr_matrix is None:
+            raise HTTPException(400, "No expression matrix loaded")
+    else:
+        if sess.df_raw is None:
+            raise HTTPException(400, "No data loaded")
+        if not (sess.g_col and sess.p_col and sess.fc_col):
+            raise HTTPException(400, "Column mapping not set")
+    try:
+        run_pipeline(sess)
+    except PipelineError as e:
+        raise HTTPException(400, str(e))
+    resp = JSONResponse({
+        "ok": True,
+        "picks": sess.selected_by_algo,
+        "n_picks": len(sess.selected_by_algo or []),
+        "selection_detail": sess.selection_detail,
+    })
+    _set_cookie(resp, sid)
+    return resp
+
+
+# ---------- API: curation (add/remove) ------------------------------------
+class CuratePayload(BaseModel):
+    rejected: list[str]
+    added: list[str] = []
+
+
+@app.post("/api/curate")
+def api_curate(payload: CuratePayload,
+               session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    sid, sess = _session(session)
+    if not sess.ran_pipeline:
+        raise HTTPException(400, "Run the pipeline first")
+    sess.rejected_genes = set(payload.rejected)
+    sess.added_genes = set(payload.added)
+    resp = JSONResponse({"ok": True, "final": final_selection(sess)})
+    _set_cookie(resp, sid)
+    return resp
+
+
+# ---------- API: state -----------------------------------------------------
+@app.get("/api/state")
+def api_state(session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    sid, sess = _session(session)
+    final = final_selection(sess) if sess.ran_pipeline else []
+    table_rows = []
+    if sess.ran_pipeline and sess.df_clean is not None:
+        g, p, fc = sess.g_col, sess.p_col, sess.fc_col
+        df = sess.df_clean
+        for idx, gene in enumerate(sess.selected_by_algo or []):
+            row = df[df[g].astype(str) == str(gene)]
+            if row.empty:
+                continue
+            row = row.iloc[0]
+            table_rows.append({
+                "rank": idx + 1,
+                "gene": str(gene),
+                "score": float(sess.rank_scores.get(str(gene), 0.0)),
+                "p_value": float(row[p]),
+                "log2fc": float(row[fc]),
+                "in_panel": str(gene) in set(final),
+                "is_added": False,
+            })
+        # Include manually-added genes that aren't among algo picks
+        for gene in sorted(sess.added_genes):
+            if gene in (sess.selected_by_algo or []):
+                continue
+            row = df[df[g].astype(str) == str(gene)]
+            if row.empty:
+                continue
+            row = row.iloc[0]
+            table_rows.append({
+                "rank": None,
+                "gene": str(gene),
+                "score": float(sess.rank_scores.get(str(gene), 0.0)),
+                "p_value": float(row[p]),
+                "log2fc": float(row[fc]),
+                "in_panel": True,
+                "is_added": True,
+            })
+
+    direction = {}
+    if sess.df_clean is not None and sess.fc_col and sess.p_col:
+        df = sess.df_clean
+        fc_num = pd.to_numeric(df[sess.fc_col], errors="coerce")
+        p_num = pd.to_numeric(df[sess.p_col], errors="coerce")
+        direction = {
+            "up": int((fc_num > 0).sum()),
+            "down": int((fc_num < 0).sum()),
+            "significant": int((p_num < 0.05).sum()) if len(p_num) else 0,
+        }
+
+    # All available gene symbols in the dataset (for the inspector dropdown).
+    # This is what lets the user add genes that the algorithm did not pick —
+    # the crux of the human-in-the-loop workflow.
+    all_symbols = []
+    if sess.df_clean is not None and sess.g_col:
+        try:
+            all_symbols = sorted(
+                sess.df_clean[sess.g_col].astype(str).dropna().unique().tolist()
+            )
+        except Exception:
+            all_symbols = []
+
+    is_matrix_mode = sess.data_mode == "expression_matrix"
+    data_loaded = (sess.expr_matrix is not None) if is_matrix_mode else (sess.df_raw is not None)
+    if is_matrix_mode and sess.expr_matrix is not None:
+        rows, columns = int(sess.expr_matrix.shape[0]), list(sess.expr_matrix.columns.astype(str))
+    elif sess.df_raw is not None:
+        rows, columns = int(len(sess.df_raw)), list(sess.df_raw.columns)
+    else:
+        rows, columns = 0, []
+
+    resp = JSONResponse({
+        "step": sess.step,
+        "filename": sess.uploaded_filename,
+        "data_mode": sess.data_mode,
+        "data_loaded": data_loaded,
+        "rows": rows,
+        "columns": columns,
+        "group_a": sess.group_a,
+        "group_b": sess.group_b,
+        "mapping": {"g_col": sess.g_col, "p_col": sess.p_col, "fc_col": sess.fc_col},
+        "strategy": sess.strategy,
+        "top_n": sess.top_n,
+        "p_thr": sess.p_thr,
+        "fc_thr": sess.fc_thr,
+        "ran_pipeline": sess.ran_pipeline,
+        "selection_detail": sess.selection_detail,
+        "algo_picks": sess.selected_by_algo or [],
+        "n_algo_picks": len(sess.selected_by_algo or []),
+        "rejected": sorted(sess.rejected_genes),
+        "added": sorted(sess.added_genes),
+        "final": final,
+        "n_final": len(final),
+        "table_rows": table_rows,
+        "all_symbols": all_symbols,
+        "direction": direction,
+    })
+    _set_cookie(resp, sid)
+    return resp
+
+
+# ---------- API: gene inspector -------------------------------------------
+@app.get("/api/gene/{symbol}")
+def api_gene(symbol: str,
+             session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    sid, sess = _session(session)
+    if sess.df_clean is None:
+        raise HTTPException(400, "Pipeline has not been run")
+
+    g, p, fc = sess.g_col, sess.p_col, sess.fc_col
+    row = sess.df_clean[sess.df_clean[g].astype(str) == str(symbol)]
+    if row.empty:
+        raise HTTPException(404, "Gene not in cleaned dataset")
+    row = row.iloc[0]
+
+    final = set(final_selection(sess))
+    algo_set = set(sess.selected_by_algo or [])
+    info = uniprot.lookup(symbol)
+
+    resp = JSONResponse({
+        "symbol": symbol,
+        "log2fc": float(row[fc]),
+        "p_value": float(row[p]),
+        "score": float(sess.rank_scores.get(str(symbol), 0.0)),
+        "in_panel": symbol in final,
+        "is_algo_pick": symbol in algo_set,
+        "uniprot": info,
+        "uniprot_loaded": uniprot.is_available(),
+    })
+    _set_cookie(resp, sid)
+    return resp
+
+
+# ---------- API: agent (LLM-assisted curation) ------------------------------
+# The agent endpoint takes the current panel + dataset context and returns
+# structured curation suggestions. Uses Gemini via google-genai. Configure
+# with GEMINI_API_KEY in .env. See backend/agent.py for prompt design.
+@app.post("/api/agent/suggest-curation")
+async def api_agent_suggest_curation(
+    request: Request,
+    session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)
+):
+    sid, sess = _session(session)
+    if sess.df_clean is None:
+        raise HTTPException(400, "Pipeline has not been run")
+    if not sess.ran_pipeline:
+        raise HTTPException(400, "Pipeline has not been run")
+
+    # Parse optional user-declared context from request body.
+    # Empty string is fine — the agent will fall back to inference mode.
+    user_context = ""
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            user_context = str(body.get("context", ""))[:500]
+    except Exception:
+        pass  # No body or invalid JSON — treat as no context
+
+    from backend import agent as _agent
+
+    # Build the top-20 by p-value from the cleaned dataframe
+    g, p, fc = sess.g_col, sess.p_col, sess.fc_col
+    df = sess.df_clean.copy()
+    df = df.sort_values(p, ascending=True).head(20)
+    top_20 = [
+        {
+            "symbol": str(row[g]),
+            "log2fc": float(row[fc]),
+            "pvalue": float(row[p]),
+        }
+        for _, row in df.iterrows()
+    ]
+
+    # Current panel = algorithm picks minus removed plus added
+    final = final_selection(sess)
+
+    # All symbols in cleaned dataset (constrains valid additions)
+    all_symbols = sess.df_clean[g].astype(str).dropna().unique().tolist()
+
+    result = _agent.suggest_curation(
+        top_20_genes=top_20,
+        current_panel=list(final),
+        all_dataset_symbols=all_symbols,
+        user_context=user_context,
+    )
+
+    resp = JSONResponse({
+        "ok": result.ok,
+        "error": result.error,
+        "context_summary": result.context_summary,
+        "context_provided": bool(user_context.strip()),
+        "remove_suggestions": [
+            {"symbol": s.symbol, "reason": s.reason, "category": s.category}
+            for s in result.remove_suggestions
+        ],
+        "add_suggestions": [
+            {"symbol": s.symbol, "reason": s.reason, "category": s.category}
+            for s in result.add_suggestions
+        ],
+    })
+    _set_cookie(resp, sid)
+    return resp
+
+
+# ---------- API: LR pairs annotation ---------------------------------------
+# Annotates the current curated panel against the CellTalkDB database.
+# Returns ligand/receptor classification for panel members, complete pairs
+# entirely inside the panel, and partial pairs where the cognate partner
+# is in the dataset but excluded from the panel.
+@app.get("/api/lr-annotation")
+def api_lr_annotation(
+    session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)
+):
+    sid, sess = _session(session)
+    if sess.df_clean is None or not sess.ran_pipeline:
+        raise HTTPException(400, "Pipeline has not been run")
+
+    from backend import lr_annotation as _lr
+
+    final = final_selection(sess)
+    all_symbols = sess.df_clean[sess.g_col].astype(str).dropna().unique().tolist()
+
+    result = _lr.annotate_panel(
+        panel=list(final),
+        all_dataset_symbols=all_symbols,
+    )
+
+    resp = JSONResponse(result)
+    _set_cookie(resp, sid)
+    return resp
+
+
+# ---------- API: plots -----------------------------------------------------
+@app.get("/api/plot/{kind}")
+def api_plot(kind: str, session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    sid, sess = _session(session)
+    if not sess.ran_pipeline:
+        raise HTTPException(400, "Pipeline has not been run")
+
+    df = sess.df_clean
+    g, p, fc = sess.g_col, sess.p_col, sess.fc_col
+    algo_picks = sess.selected_by_algo or []
+    final = final_selection(sess)
+
+    # ---- LOUD DIAGNOSTIC BLOCK -------------------------------------------
+    print("\n" + "=" * 64)
+    print(f"  PLOT REQUEST: {kind}")
+    print(f"  column mapping → gene={g!r}  p={p!r}  fc={fc!r}")
+    if df is None:
+        print("  !! df_clean is None")
+    else:
+        print(f"  df_clean: {len(df)} rows, columns = {list(df.columns)}")
+        for col, role in [(g, "gene"), (p, "p-value"), (fc, "log2FC")]:
+            if col not in df.columns:
+                print(f"  !! {role} column {col!r} NOT FOUND in df_clean")
+            else:
+                series = df[col]
+                numeric = pd.to_numeric(series, errors="coerce")
+                n_bad = int(numeric.isna().sum())
+                print(f"  {role:8} col={col!r:20} dtype={str(series.dtype):10} "
+                      f"non-numeric/NaN={n_bad}/{len(series)}  "
+                      f"sample={list(series.head(3))}")
+    print(f"  algo_picks: {len(algo_picks)}   final panel: {len(final)}")
+    print("=" * 64)
+    # ----------------------------------------------------------------------
+
+    try:
+        if kind == "volcano":
+            body = plots.volcano(df, g, p, fc, algo_picks, final)
+        elif kind == "ppi":
+            body = plots.ppi_network(final)
+        elif kind == "kegg":
+            body = plots.kegg_pathway_svg(final)
+        elif kind == "pca":
+            body = plots.pca_scatter(df, g, p, fc, final)
+        elif kind == "log2fc":
+            body = plots.log2fc_profile(df, g, p, fc, final)
+        else:
+            raise HTTPException(404, f"Unknown plot kind: {kind}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"  !! PLOT {kind} RAISED AN EXCEPTION:")
+        traceback.print_exc()
+        raise HTTPException(500, f"Plot '{kind}' failed: {e}")
+
+    if isinstance(body, dict):
+        if body.get("empty"):
+            print(f"  → {kind}: returned EMPTY (no data survived filtering)")
+        elif body.get("unavailable"):
+            print(f"  → {kind}: unavailable ({body.get('reason','')[:60]})")
+        elif "data" in body:
+            pts = sum(len(t.get("x", []) or []) for t in body["data"])
+            print(f"  → {kind}: OK, {len(body['data'])} traces, {pts} points")
+        elif "svg" in body:
+            print(f"  → {kind}: OK, SVG ({len(body['svg'])} chars)")
+
+    resp = JSONResponse(body)
+    _set_cookie(resp, sid)
+    return resp
+
+
+# ---------- API: top-of-final-table for Step 4 Discovery Summary ----------
+@app.get("/api/top-discoveries")
+def api_top_discoveries(session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    sid, sess = _session(session)
+    if not sess.ran_pipeline:
+        return JSONResponse({"rows": []})
+    final = final_selection(sess)
+    df = sess.df_clean
+    g, p, fc = sess.g_col, sess.p_col, sess.fc_col
+    tbl = (
+        df[df[g].astype(str).isin(final)][[g, p, fc]]
+          .copy()
+          .assign(_p=lambda d: pd.to_numeric(d[p], errors="coerce"))
+          .sort_values("_p")
+          .drop(columns=["_p"])
+          .head(50)
+    )
+    rows = [
+        {"gene": str(r[g]), "p_value": float(r[p]), "log2fc": float(r[fc])}
+        for _, r in tbl.iterrows()
+    ]
+    resp = JSONResponse({"rows": rows})
+    _set_cookie(resp, sid)
+    return resp
+
+
+# ---------- API: export ----------------------------------------------------
+@app.get("/api/export.xlsx")
+def api_export_xlsx(session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    sid, sess = _session(session)
+    if not sess.ran_pipeline:
+        raise HTTPException(400, "Pipeline has not been run")
+    final = final_selection(sess)
+    df = sess.df_clean
+    df_export = df[df[sess.g_col].astype(str).isin(final)].copy()
+    out = BytesIO()
+    with pd.ExcelWriter(out, engine="openpyxl") as writer:
+        df_export.to_excel(writer, index=False, sheet_name="Final_Panel")
+        pd.DataFrame({"algorithm_picks": sess.selected_by_algo or []}) \
+            .to_excel(writer, index=False, sheet_name="Algo_Picks")
+        pd.DataFrame({"rejected": sorted(sess.rejected_genes)}) \
+            .to_excel(writer, index=False, sheet_name="Rejected")
+        pd.DataFrame({"added": sorted(sess.added_genes)}) \
+            .to_excel(writer, index=False, sheet_name="Added")
+    out.seek(0)
+    return StreamingResponse(
+        out,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=GeneCurator_report.xlsx"},
+    )
+
+
+@app.get("/api/export.csv")
+def api_export_csv(session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    sid, sess = _session(session)
+    if not sess.ran_pipeline:
+        raise HTTPException(400, "Pipeline has not been run")
+    final = final_selection(sess)
+    df = sess.df_clean
+    df_export = df[df[sess.g_col].astype(str).isin(final)].copy()
+    buf = BytesIO(df_export.to_csv(index=False).encode("utf-8"))
+    return StreamingResponse(
+        buf, media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=gene_panel.csv"},
+    )
+
+
+@app.get("/api/export-all.zip")
+def api_export_all(session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    """Bundle everything the session has produced into a single ZIP:
+    the panel report, algorithm picks, curation edits, every available
+    enrichment library, and the ligand-receptor annotation.
+    """
+    import zipfile
+    import json as _json
+    from backend import lr_annotation as _lr
+
+    sid, sess = _session(session)
+    if not sess.ran_pipeline:
+        raise HTTPException(400, "Pipeline has not been run")
+
+    final = final_selection(sess)
+    df = sess.df_clean
+    df_export = df[df[sess.g_col].astype(str).isin(final)].copy()
+    genes = list(final)
+
+    zip_buf = BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 1. The full Excel report (panel + picks + rejected + added)
+        xlsx_buf = BytesIO()
+        with pd.ExcelWriter(xlsx_buf, engine="openpyxl") as writer:
+            df_export.to_excel(writer, index=False, sheet_name="Final_Panel")
+            pd.DataFrame({"algorithm_picks": sess.selected_by_algo or []}) \
+                .to_excel(writer, index=False, sheet_name="Algo_Picks")
+            pd.DataFrame({"rejected": sorted(sess.rejected_genes)}) \
+                .to_excel(writer, index=False, sheet_name="Rejected")
+            pd.DataFrame({"added": sorted(sess.added_genes)}) \
+                .to_excel(writer, index=False, sheet_name="Added")
+        zf.writestr("GeneCurator_report.xlsx", xlsx_buf.getvalue())
+
+        # 2. The plain gene panel as CSV
+        zf.writestr("gene_panel.csv", df_export.to_csv(index=False))
+
+        # 3. Enrichment results for every available library (one CSV each)
+        avail = enrichment.available_libraries(ENRICHR_DIR)
+        for lib_id, present in avail.items():
+            if not present:
+                continue
+            try:
+                rows = enrichment.enrich(genes, lib_id, ENRICHR_DIR, top_n=50)
+            except Exception:
+                continue
+            if not rows:
+                continue
+            rows_df = pd.DataFrame([r.as_dict() for r in rows])
+            safe = lib_id.replace("/", "_").replace(" ", "_")
+            zf.writestr(f"enrichment/{safe}.csv", rows_df.to_csv(index=False))
+
+        # 4. Ligand-receptor annotation (JSON)
+        try:
+            all_symbols = sess.df_clean[sess.g_col].astype(str).dropna().unique().tolist()
+            lr = _lr.annotate_panel(panel=genes, all_dataset_symbols=all_symbols)
+            zf.writestr("ligand_receptor_annotation.json",
+                        _json.dumps(lr, indent=2))
+        except Exception:
+            pass
+
+        # 5. A short README describing the contents and the run
+        readme = (
+            "GeneCurator export\n"
+            "==================\n\n"
+            f"Final panel: {len(genes)} genes\n"
+            f"Selection method: {sess.strategy}\n"
+            f"Genes removed by curation: {len(sess.rejected_genes)}\n"
+            f"Genes added by curation: {len(sess.added_genes)}\n\n"
+            "Contents:\n"
+            "  GeneCurator_report.xlsx          Panel, algorithm picks, rejected, added\n"
+            "  gene_panel.csv                   Final panel only\n"
+            "  enrichment/*.csv                 Over-representation per library\n"
+            "  ligand_receptor_annotation.json  CellTalkDB annotation\n"
+        )
+        zf.writestr("README.txt", readme)
+
+    zip_buf.seek(0)
+    resp = StreamingResponse(
+        zip_buf, media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=GeneCurator_export.zip"},
+    )
+    return resp
+
+
+# ---------- API: reset -----------------------------------------------------
+@app.post("/api/reset")
+def api_reset(session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    if session:
+        state.reset(session)
+    sid, _ = _session(None)
+    resp = JSONResponse({"ok": True})
+    _set_cookie(resp, sid)
+    return resp
+
+
+# ---------- API: algorithms catalog (for the Step 2 card grid) ------------
+@app.get("/api/algorithms")
+def api_algorithms(session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    sid, sess = _session(session)
+    has_matrix = sess.data_mode == "expression_matrix" and sess.expr_matrix is not None
+    algos = []
+    for a in ALGORITHMS:
+        a = dict(a)
+        a["available"] = has_matrix or not a["requires_expression_matrix"]
+        algos.append(a)
+    resp = JSONResponse({"algorithms": algos, "has_expression_matrix": has_matrix})
+    _set_cookie(resp, sid)
+    return resp
+
+
+@app.get("/api/recommend-algorithm")
+def api_recommend_algorithm(session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    """Data-driven algorithm recommendation for the Step 2 modal. Honest
+    about the fact that only Traditional DEG is available without an
+    uploaded expression matrix — see algorithm_recommender.py."""
+    sid, sess = _session(session)
+    has_matrix = sess.data_mode == "expression_matrix" and sess.expr_matrix is not None
+
+    if has_matrix:
+        df = sess.df_clean if sess.df_clean is not None else data.compute_deg_stats(
+            sess.expr_matrix.loc[[s for s in sess.expr_matrix.index if s in sess.sample_groups]],
+            pd.Series(sess.sample_groups),
+            sess.group_a, sess.group_b,
+        )
+        g, p, fc = "gene_symbol", "p_value", "log2FC"
+    else:
+        if sess.df_raw is None:
+            raise HTTPException(400, "No data loaded")
+        df = sess.df_raw
+        g, p, fc = sess.g_col, sess.p_col, sess.fc_col
+        if not (g and p and fc):
+            raise HTTPException(400, "Column mapping not set")
+
+    result = algorithm_recommender.make_recommendation(df, g, p, fc, has_expression_matrix=has_matrix)
+    resp = JSONResponse(result)
+    _set_cookie(resp, sid)
+    return resp
+
+
+# ==========================================================================
+# ENRICHMENT ANALYSIS  (new)
+# ==========================================================================
+
+@app.get("/api/enrichment/status")
+def api_enrichment_status(session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    """Report which of the 12 libraries are available on disk, and whether
+    the local KEGG PNG/KGML snapshot is present. The frontend uses this on
+    Step 4 to decide which sub-tabs to show."""
+    sid, _ = _session(session)
+    avail = enrichment.available_libraries(ENRICHR_DIR)
+    resp = JSONResponse({
+        "libraries": avail,
+        "catalog": enrichment.LIBRARY_CATALOG,
+        "kegg_maps_available": kegg_maps.available(KEGG_DATA_DIR),
+        "kegg_snapshot_date": kegg_maps.snapshot_date(KEGG_DATA_DIR),
+    })
+    _set_cookie(resp, sid)
+    return resp
+
+
+@app.get("/api/enrichment/{library}")
+def api_enrichment(library: str, top_n: int = 25,
+                   session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    """Run Fisher's exact + BH FDR on the current session's final gene panel
+    against a library. `library` must match a key in LIBRARY_CATALOG."""
+    sid, sess = _session(session)
+    if not sess.ran_pipeline:
+        raise HTTPException(400, "Pipeline has not been run")
+
+    valid_libs = {lib_id for group in enrichment.LIBRARY_CATALOG.values()
+                  for lib_id, _ in group}
+    if library not in valid_libs:
+        raise HTTPException(404, f"Unknown library: {library}")
+
+    genes = final_selection(sess)
+    if not genes:
+        raise HTTPException(400, "Final gene panel is empty")
+
+    top_n = max(1, min(int(top_n), 100))
+    print(f"\n{'='*64}\n  ENRICHMENT: {library}  (query: {len(genes)} genes)")
+    results = enrichment.enrich(genes, library, ENRICHR_DIR, top_n=top_n)
+    print(f"  → {len(results)} terms returned (from top {top_n} requested)")
+    print("=" * 64)
+
+    resp = JSONResponse({
+        "library": library,
+        "n_query_genes": len(genes),
+        "n_terms": len(results),
+        "results": [r.as_dict() for r in results],
+    })
+    _set_cookie(resp, sid)
+    return resp
+
+
+@app.get("/api/kegg-map")
+def api_kegg_map(term: str,
+                 session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
+    """Render a KEGG pathway map with the session's final gene panel
+    highlighted. `term` is the Enrichr KEGG term name (e.g. 'HEPATITIS B')."""
+    sid, sess = _session(session)
+    if not sess.ran_pipeline:
+        raise HTTPException(400, "Pipeline has not been run")
+    if sess.df_clean is None:
+        raise HTTPException(400, "No cleaned data in session")
+    if not kegg_maps.available(KEGG_DATA_DIR):
+        raise HTTPException(503, {
+            "reason": "kegg_maps_missing",
+            "message": ("KEGG map snapshot not found. From the project root, run: "
+                        "`python download_kegg_assets.py` (takes ~15 min)."),
+        })
+
+    pid = kegg_maps.find_pathway_id(term, KEGG_DATA_DIR)
+    if pid is None:
+        raise HTTPException(404, f"No KEGG map matches term: {term!r}")
+
+    # Build gene → log2FC lookup for the final panel
+    g, fc = sess.g_col, sess.fc_col
+    df = sess.df_clean
+    final = final_selection(sess)
+    fc_lookup = (
+        df.assign(_gsym=df[g].astype(str).str.upper())
+          .set_index("_gsym")[fc]
+          .to_dict()
+    )
+    gene_fc = {gene: float(fc_lookup.get(gene.upper(), 0.0)) for gene in final}
+
+    result = kegg_maps.render_map(pid, gene_fc, KEGG_DATA_DIR)
+    if "error" in result:
+        raise HTTPException(500, result["error"])
+
+    print(f"  → KEGG map {pid}: {result['highlighted']}/{result['total_boxes']} "
+          f"boxes highlighted, {len(result['hit_genes'])} unique genes")
+    resp = JSONResponse(result)
+    _set_cookie(resp, sid)
+    return resp

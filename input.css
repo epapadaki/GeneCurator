@@ -1,0 +1,469 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* IBM Plex Sans + Tabler icons are self-hosted (see fonts.css / tabler-icons.min.css) */
+
+/* =========================================================================
+   THEME TOKENS — GeneCurator visual identity
+   Palette: Ionian navy (#0369a1 family) + coral (#ea580c family)
+   Aesthetic: serious research infrastructure — flat, dense, information-first
+   ========================================================================= */
+:root {
+  /* Brand */
+  --brand:            #0c3f66;   /* deep Ionian navy (headers) */
+  --brand-500:        #0369a1;   /* accent navy (logo bg, links, active) */
+  --brand-400:        #0284c7;   /* hover */
+  --brand-100:        #e0f2fe;   /* pale wash */
+  --brand-tx:         #075985;   /* text on pale wash */
+
+  --accent:           #ea580c;   /* coral (calls to action, active indicators) */
+  --accent-500:       #ea580c;
+  --accent-400:       #f97316;
+  --accent-100:       #ffedd5;
+  --accent-tx:        #9a3412;
+
+  /* Surfaces */
+  --bg-page:          #f5f4f0;   /* warm off-white — softer than pure white */
+  --bg-shell:         #ffffff;
+  --bg-card:          #ffffff;
+  --bg-card-soft:     #fafaf7;
+  --bg-inset:         #f5f4f0;
+  --bg-hover:         #ebeae4;
+
+  /* Text — high contrast, dense */
+  --text-strong:      #1a1a1a;
+  --text-body:        #2c2c2a;
+  --text-muted:       #5f5e5a;
+  --text-faint:       #888780;
+
+  /* Lines */
+  --border:           #d3d1c7;   /* warm gray hairline */
+  --border-strong:    #b4b2a9;
+
+  /* Status hues — unified with brand palette (navy for ok/info, coral for warn) */
+  --ok-bg:   #e0f2fe;  --ok-tx:   #075985;  --ok-bd:   #bae6fd;  --ok-solid: #0369a1;
+  --warn-bg: #ffedd5;  --warn-tx: #9a3412;  --warn-bd: #fed7aa;  --warn-solid:#ea580c;
+  --bad-bg:  #fef2f2;  --bad-tx:  #991b1b;  --bad-bd:  #fecaca;  --bad-solid: #dc2626;
+  --info-bg: #e0f2fe;  --info-tx: #075985;  --info-bd: #bae6fd;  --info-solid:#0369a1;
+  --gray-bg: #ebeae4;  --gray-tx: #2c2c2a;
+
+  /* Focus ring */
+  --focus-ring: 0 0 0 2px #ffffff, 0 0 0 4px var(--brand-500);
+
+  /* Plot surface */
+  --plot-paper: #ffffff;
+  --plot-grid:  #e5e4de;
+  --plot-text:  #1a1a1a;
+
+  /* Neutral fills */
+  --fill-success: #e0f2fe;
+  --fill-indigo:  #e0f2fe;
+  --fill-success-icon: #bae6fd;
+  --fill-translucent: rgba(255, 255, 255, 0.7);
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  /* Brand — a touch brighter to pop on dark */
+  --brand:            #082f4a;
+  --brand-500:        #0284c7;
+  --brand-400:        #0ea5e9;
+  --brand-100:        #0c3a5a;
+  --brand-tx:         #bae6fd;
+
+  --accent:           #fb923c;
+  --accent-500:       #fb923c;
+  --accent-400:       #fdba74;
+  --accent-100:       #3a1d0a;
+  --accent-tx:        #fed7aa;
+
+  /* Surfaces */
+  --bg-page:          #0d1117;
+  --bg-shell:         #131924;
+  --bg-card:          #1a2233;
+  --bg-card-soft:     #161c2a;
+  --bg-inset:         #141a26;
+  --bg-hover:         #1f2937;
+
+  /* Text */
+  --text-strong:      #f3f4f6;
+  --text-body:        #d1d5db;
+  --text-muted:       #9ca3af;
+  --text-faint:       #6b7280;
+
+  /* Lines */
+  --border:           #2a3247;
+  --border-strong:    #3a4560;
+
+  /* Status hues */
+  --ok-bg:   #052e21;  --ok-tx:   #6ee7b7;  --ok-bd:   #14563d;  --ok-solid: #10b981;
+  --warn-bg: #2a1e08;  --warn-tx: #fbbf24;  --warn-bd: #5a3f0d;  --warn-solid:#d97706;
+  --bad-bg:  #2b1113;  --bad-tx:  #fca5a5;  --bad-bd:  #5a1c1e;  --bad-solid: #ef4444;
+  --info-bg: #0c3a5a;  --info-tx: #bae6fd;  --info-bd: #164e77;  --info-solid:#0ea5e9;
+  --gray-bg: #1f2937;  --gray-tx: #d1d5db;
+
+  --focus-ring: 0 0 0 2px #131924, 0 0 0 4px var(--brand-500);
+
+  /* Plot surface */
+  --plot-paper: #1a2233;
+  --plot-grid:  #2a3247;
+  --plot-text:  #d1d5db;
+
+  --fill-success: #052e21;
+  --fill-indigo:  #0c3a5a;
+  --fill-success-icon: #14563d;
+  --fill-translucent: rgba(255, 255, 255, 0.05);
+
+  color-scheme: dark;
+}
+
+/* Smooth theme transitions but suppress on load */
+body, .gc-card, .gc-card-soft, .gc-actionbar, .gc-algo-card,
+.gc-btn-primary, .gc-btn-secondary, .gc-chip, .gc-metric,
+table, th, td, select, input, .gc-shell {
+  transition: background-color 0.2s ease, border-color 0.2s ease,
+              color 0.2s ease;
+}
+.no-transition, .no-transition * { transition: none !important; }
+
+[x-cloak] { display: none !important; }
+
+/* =========================================================================
+   COMPONENT LAYER — flat, dense, research-tool aesthetic
+   ========================================================================= */
+@layer components {
+
+  /* Cards — flat, hairline border, no shadow */
+  .gc-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .gc-card-soft {
+    background: var(--bg-card-soft);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+
+  /* Chips — dense, subdued */
+  .gc-chip {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+  .gc-chip-gray    { background: var(--gray-bg); color: var(--gray-tx); }
+  .gc-chip-indigo  { background: var(--info-bg); color: var(--info-tx); }
+  .gc-chip-success { background: var(--ok-bg);   color: var(--ok-tx); }
+  .gc-chip-warn    { background: var(--warn-bg); color: var(--warn-tx); }
+  .gc-chip-danger  { background: var(--bad-bg);  color: var(--bad-tx); }
+
+  /* Buttons — navy primary (not coral). Research tools reserve bright
+     colors for warnings/actions, not for standard confirm/submit buttons. */
+  .gc-btn-primary {
+    background: var(--brand-500);
+    color: #ffffff;
+    border: 1px solid var(--brand-500);
+    @apply px-5 py-2.5 rounded text-sm transition-colors;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+  .gc-btn-primary:hover:not(:disabled) {
+    background: var(--brand-400);
+    border-color: var(--brand-400);
+  }
+  .gc-btn-primary:disabled { @apply opacity-40 cursor-not-allowed; }
+
+  .gc-btn-secondary {
+    background: var(--bg-card);
+    color: var(--text-body);
+    border: 1px solid var(--border-strong);
+    @apply px-5 py-2.5 rounded text-sm transition-colors;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+  .gc-btn-secondary:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--text-strong);
+  }
+  .gc-btn-secondary:disabled { @apply opacity-40 cursor-not-allowed; }
+
+  .gc-btn-success {
+    background: var(--brand-500);
+    color: #ffffff;
+    border: 1px solid var(--brand-500);
+    @apply px-5 py-2.5 rounded text-sm transition-colors;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+  .gc-btn-success:hover:not(:disabled) { background: var(--brand-400); border-color: var(--brand-400); }
+  .gc-btn-success:disabled { @apply opacity-40 cursor-not-allowed; }
+
+  .gc-btn-ghost {
+    color: var(--text-muted);
+    @apply px-3 py-1.5 rounded text-sm transition-colors;
+  }
+  .gc-btn-ghost:hover { color: var(--text-strong); background: var(--bg-hover); }
+
+  /* Section label — small caps for research-tool feel */
+  .gc-section-label {
+    color: var(--text-muted);
+    @apply text-[11px] mb-3;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  /* Step bubble */
+  .gc-step-bubble {
+    @apply w-7 h-7 rounded-full flex items-center justify-center text-xs flex-shrink-0;
+    font-weight: 500;
+  }
+
+  /* Neutral stats strip — replaces the old colored metric cards.
+     Numbers are the content. No boxes, no fills, no per-item colors —
+     matches the aesthetic of Ensembl / UCSC summary panels. */
+  .gc-stats-strip {
+    display: flex;
+    gap: 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-shell);
+  }
+  .gc-stat {
+    flex: 1;
+    padding: 14px 20px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: baseline;
+    gap: 2px;
+  }
+  .gc-stat:last-child { border-right: none; }
+  .gc-stat-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+    font-weight: 400;
+  }
+  .gc-stat-value {
+    font-size: 22px;
+    font-weight: 400;
+    color: var(--text-strong);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+  }
+  .gc-stat-sub {
+    font-size: 11px;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+    margin-top: 1px;
+  }
+
+  /* Legacy metric cards — kept for backwards compat but should not be used */
+  .gc-metric { @apply rounded p-4 border; letter-spacing: 0.01em; }
+  .gc-metric-label {
+    @apply text-[11px] mb-2;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .gc-metric-value {
+    @apply text-2xl tabular-nums leading-none;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+  }
+  .gc-metric-ok   { background: var(--bg-card); border-color: var(--border); }
+  .gc-metric-ok   .gc-metric-label, .gc-metric-ok   .gc-metric-value { color: var(--text-strong); }
+  .gc-metric-info { background: var(--bg-card); border-color: var(--border); }
+  .gc-metric-info .gc-metric-label, .gc-metric-info .gc-metric-value { color: var(--text-strong); }
+  .gc-metric-warn { background: var(--bg-card); border-color: var(--border); }
+  .gc-metric-warn .gc-metric-label, .gc-metric-warn .gc-metric-value { color: var(--text-strong); }
+  .gc-metric-bad  { background: var(--bg-card); border-color: var(--border); }
+  .gc-metric-bad  .gc-metric-label, .gc-metric-bad  .gc-metric-value { color: var(--text-strong); }
+
+  /* Algorithm cards — flat, coral border on selected */
+  .gc-algo-card {
+    position: relative;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    @apply rounded p-4 cursor-pointer transition-colors;
+  }
+  .gc-algo-card:hover {
+    border-color: var(--brand-500);
+    background: var(--bg-card-soft);
+  }
+  .gc-algo-card-selected {
+    border: 1px solid var(--accent);
+    background: var(--accent-100);
+  }
+  .gc-algo-icon {
+    @apply w-10 h-10 rounded flex items-center justify-center text-xl mb-3;
+  }
+  .gc-algo-icon-idle     { background: var(--bg-inset); color: var(--text-muted); }
+  .gc-algo-icon-selected { background: var(--accent); color: #ffffff; }
+
+  /* Action bar — clean top border, no filled background */
+  .gc-actionbar {
+    background: var(--bg-shell);
+    border-top: 1px solid var(--border);
+    @apply px-8 py-4 flex justify-between items-center;
+  }
+
+  /* Theme toggle — subtle outlined */
+  .gc-theme-toggle {
+    @apply w-8 h-8 rounded flex items-center justify-center text-sm cursor-pointer transition-colors;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.85);
+  }
+  .gc-theme-toggle:hover {
+    background: rgba(255,255,255,0.14);
+    color: #ffffff;
+  }
+
+  /* Step-pill — subtle, monochrome */
+  .gc-step-pill {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.85);
+    @apply px-3 py-1 rounded-sm text-[11px];
+    font-weight: 400;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .gc-step-pill-done {
+    background: rgba(255,255,255,0.08);
+    border-color: rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.85);
+  }
+
+  /* Tabs — flat, navy underline on active */
+  .gc-tab {
+    @apply px-4 py-3 text-sm flex items-center gap-2 transition-colors relative;
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    font-weight: 400;
+  }
+  .gc-tab:hover { color: var(--text-strong); }
+  .gc-tab-active {
+    color: var(--brand-tx);
+    border-bottom-color: var(--brand-500);
+    font-weight: 500;
+  }
+}
+
+/* =========================================================================
+   ELEMENT-LEVEL THEMING
+   ========================================================================= */
+body {
+  background: var(--bg-page);
+  color: var(--text-body);
+  font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+               Roboto, sans-serif;
+  font-feature-settings: 'ss01', 'cv02', 'cv11';
+  letter-spacing: 0.005em;
+}
+
+.gc-shell {
+  background: var(--bg-shell);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+/* Form controls */
+select, input[type="text"], input[type="number"] {
+  color: var(--text-body);
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 13px;
+}
+select:focus, input[type="text"]:focus, input[type="number"]:focus {
+  outline: none;
+  border-color: var(--brand-500);
+  box-shadow: 0 0 0 3px rgba(3, 105, 161, 0.15);
+}
+
+/* Tables — dense research-style */
+table { color: var(--text-body); font-size: 13px; }
+thead { background: var(--bg-inset); }
+th {
+  color: var(--text-muted);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+tbody tr { border-color: var(--border); }
+tbody tr:hover { background: var(--bg-hover); }
+
+/* Remap Tailwind's fixed grays to themed variables */
+.text-gray-900, .text-gray-800 { color: var(--text-strong) !important; }
+.text-gray-700, .text-gray-600 { color: var(--text-body) !important; }
+.text-gray-500 { color: var(--text-muted) !important; }
+.text-gray-400 { color: var(--text-faint) !important; }
+
+.bg-white  { background: var(--bg-card) !important; }
+.bg-slate-50, .bg-gray-50 { background: var(--bg-card-soft) !important; }
+.bg-gray-100 { background: var(--bg-inset) !important; }
+.hover\:bg-slate-50:hover { background: var(--bg-hover) !important; }
+.bg-indigo-50 { background: var(--brand-100) !important; }
+.bg-amber-50  { background: var(--warn-bg) !important; }
+.border-gray-200 { border-color: var(--border) !important; }
+.border-gray-300 { border-color: var(--border-strong) !important; }
+.border-gray-100 { border-color: var(--border) !important; }
+.border-amber-200 { border-color: var(--warn-bd) !important; }
+.hover\:bg-indigo-50\/30:hover { background: var(--brand-100) !important; }
+
+/* Colored text remaps — unify EVERYTHING to brand palette */
+.text-emerald-900, .text-emerald-800, .text-emerald-700, .text-emerald-600, .text-emerald-500 { color: var(--brand-tx) !important; }
+.text-amber-900, .text-amber-800, .text-amber-700, .text-amber-600, .text-amber-500 { color: var(--warn-tx) !important; }
+.text-indigo-900, .text-indigo-800, .text-indigo-700 { color: var(--brand-tx) !important; }
+.text-indigo-600, .text-indigo-500 { color: var(--brand-500) !important; }
+.text-pink-900, .text-pink-800, .text-pink-700, .text-pink-500 { color: var(--bad-tx) !important; }
+.text-rose-600, .text-rose-700, .text-rose-500 { color: var(--bad-tx) !important; }
+
+/* Background remaps for colored fills */
+.bg-emerald-50 { background: var(--ok-bg) !important; }
+.bg-emerald-100 { background: var(--ok-bd) !important; }
+.bg-emerald-500 { background: var(--brand-500) !important; }
+.bg-indigo-50 { background: var(--brand-100) !important; }
+.bg-indigo-100 { background: var(--brand-100) !important; }
+.bg-indigo-500 { background: var(--brand-500) !important; }
+.bg-amber-100 { background: var(--warn-bd) !important; }
+.bg-pink-500 { background: var(--bad-solid) !important; }
+.bg-rose-50 { background: var(--bad-bg) !important; }
+
+/* Border remaps */
+.border-emerald-500 { border-color: var(--brand-500) !important; }
+.border-indigo-500 { border-color: var(--brand-500) !important; }
+.border-indigo-400 { border-color: var(--brand-400) !important; }
+.border-rose-200 { border-color: var(--bad-bd) !important; }
+
+/* Accent color (for checkbox / range) */
+.accent-indigo-500 { accent-color: var(--brand-500) !important; }
+
+/* Hover states */
+.hover\:border-emerald-500:hover { border-color: var(--brand-500) !important; }
+.hover\:border-indigo-400:hover { border-color: var(--brand-400) !important; }
+.hover\:border-indigo-500:hover { border-color: var(--brand-500) !important; }
+.hover\:bg-rose-50:hover { background: var(--bad-bg) !important; }
+.hover\:bg-indigo-100:hover { background: var(--brand-100) !important; }
+
+/* Themed gradient backgrounds → flat themed fills */
+.bg-gradient-success      { background: var(--fill-success) !important; }
+.bg-gradient-indigo-soft  { background: var(--fill-indigo) !important; }
+.bg-white\/70             { background: var(--fill-translucent) !important; }
+.bg-gradient-primary { background: var(--brand) !important; }
+
+/* Headings */
+h1, h2, h3, h4 {
+  color: var(--text-strong);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+}

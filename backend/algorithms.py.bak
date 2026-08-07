@@ -1,0 +1,69 @@
+"""
+The 7 feature-selection algorithms.
+
+Transplanted VERBATIM from the original Streamlit app's run_comprehensive_engine.
+DO NOT modify the logic here — these are the methods the paper describes.
+"""
+
+import functools
+
+import numpy as np
+import shap
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.linear_model import ElasticNet, Lasso
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVR
+
+
+ALGORITHMS = [
+    {"key": "Traditional DEG (Volcano)",  "title": "Traditional DEG",   "icon": "ti-chart-dots",        "desc": "Volcano-plot thresholds on p-value and log2FC."},
+    {"key": "Random Forest (Ensemble)",   "title": "Random Forest",     "icon": "ti-binary-tree",       "desc": "Tree-based importance scores from ensemble learning."},
+    {"key": "XGBoost-style Boosting",     "title": "Gradient Boosting", "icon": "ti-trending-up",       "desc": "XGBoost-style boosted trees, sequential refinement."},
+    {"key": "SHAP Feature Ranking",       "title": "SHAP Ranking",      "icon": "ti-circles-relation",  "desc": "Shapley-value-based feature attribution."},
+    {"key": "LASSO (L1) Regression",      "title": "LASSO",             "icon": "ti-line",              "desc": "L1-regularized regression coefficients."},
+    {"key": "Elastic Net (L1+L2)",        "title": "Elastic Net",       "icon": "ti-grid-dots",         "desc": "Combined L1+L2 regularization for stability."},
+    {"key": "SVR (Support Vector)",       "title": "SVR",               "icon": "ti-vector",            "desc": "Support-vector regression with RBF kernel."},
+]
+
+
+@functools.lru_cache(maxsize=64)
+def _run_engine_cached(X_bytes: bytes, X_shape: tuple, strategy_type: str):
+    """Cached on serialized bytes — the FastAPI app calls run_engine() below."""
+    X_vals = np.frombuffer(X_bytes, dtype=np.float64).reshape(X_shape)
+    return _run_engine_inner(X_vals, strategy_type)
+
+
+def _run_engine_inner(X_vals, strategy_type):
+    """
+    Original implementation, byte-for-byte unchanged. Returns (predictions, impact).
+    """
+    y = np.abs(X_vals[:, 1]) * (-np.log10(X_vals[:, 0] + 1e-10))
+    X_sc = StandardScaler().fit_transform(X_vals)
+
+    if strategy_type == "Random Forest (Ensemble)":
+        m = RandomForestRegressor(n_estimators=100, n_jobs=-1, random_state=42).fit(X_vals, y)
+        return m.predict(X_vals), [0.5, 0.5]
+    elif strategy_type == "XGBoost-style Boosting":
+        m = GradientBoostingRegressor(n_estimators=100, random_state=42).fit(X_vals, y)
+        return m.predict(X_vals), [0.5, 0.5]
+    elif strategy_type == "SHAP Feature Ranking":
+        m = RandomForestRegressor(n_estimators=100, n_jobs=-1, random_state=42).fit(X_vals, y)
+        expl = shap.TreeExplainer(m)
+        shap_v = expl.shap_values(X_vals[: min(1000, len(X_vals))])
+        return m.predict(X_vals), np.abs(shap_v).mean(axis=0).tolist()
+    elif strategy_type == "LASSO (L1) Regression":
+        m = Lasso(alpha=0.01, random_state=42).fit(X_sc, y)
+        return m.predict(X_sc), [0.5, 0.5]
+    elif strategy_type == "Elastic Net (L1+L2)":
+        m = ElasticNet(alpha=0.01, random_state=42).fit(X_sc, y)
+        return m.predict(X_sc), [0.5, 0.5]
+    elif strategy_type == "SVR (Support Vector)":
+        m = SVR(kernel="rbf").fit(X_sc, y)
+        return m.predict(X_sc), [0.5, 0.5]
+    return np.zeros(len(X_vals)), [0.5, 0.5]
+
+
+def run_engine(X_vals: np.ndarray, strategy_type: str):
+    """Public entry point. X_vals is (N, 2): columns are p_value, log2FC."""
+    X64 = np.ascontiguousarray(X_vals, dtype=np.float64)
+    return _run_engine_cached(X64.tobytes(), X64.shape, strategy_type)

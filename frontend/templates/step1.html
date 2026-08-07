@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% block content %}
+<div x-data="step1">
+<div class="p-10 min-h-[480px]">
+
+  <div class="text-center mb-8">
+    <img src="/static/img/hero.svg" alt="Human-in-the-loop DNA curation" style="max-width: 260px; margin: 0 auto 24px; display: block; width: 100%; height: auto;"><h1 class="text-[26px] font-bold text-gray-900 mb-3 tracking-tight">Welcome to GeneCurator</h1><p class="text-[15px] text-gray-600 leading-relaxed mb-6" style="max-width: 640px; margin-left: auto; margin-right: auto;">Turn an expression matrix into a curated, biologically meaningful gene panel &mdash; with expert judgment at the crucial step.</p><div style="max-width: 640px; margin: 0 auto 28px; border-top: 1px solid var(--border);"></div><h2 class="text-[20px] font-bold text-gray-900 mb-2 tracking-tight">Load data</h2>
+    <p class="text-sm text-gray-500">Provide an expression matrix (samples &times; genes) and sample groups for feature selection.</p>
+  </div>
+
+  {# Hero illustration + upload cards in 2-column layout #}
+  <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-6 items-center max-w-[1050px] mx-auto">
+
+
+    {# RIGHT: upload + example dataset cards (2 cards, equal width) #}
+    <div class="grid grid-cols-2 gap-3">
+
+      {# Upload card — expression matrix + sample metadata (two files) #}
+      <div class="bg-white border border-dashed border-gray-400 rounded px-4 py-6 text-center transition hover:border-gray-600">
+        <div class="w-12 h-12 mx-auto mb-2.5 rounded flex items-center justify-center text-xl"
+             style="background: var(--bg-inset); color: var(--text-muted);">
+          <i class="ti ti-upload"></i>
+        </div>
+        <h3 class="text-sm font-semibold text-gray-900 mb-1">Upload your data</h3>
+        <p class="text-[11px] text-gray-500 mb-3">Expression matrix + sample groups &middot; CSV/TSV/TXT</p>
+
+        {# File 1: expression matrix (samples x genes) #}
+        <input type="file" accept=".csv,.tsv,.txt" class="hidden" x-ref="matrix"
+               @change="onMatrixFile($event)">
+        <button class="w-full mb-1.5 inline-flex items-center justify-center text-xs border border-gray-300 rounded px-2 py-1.5 hover:border-gray-500 transition"
+                @click="$refs.matrix.click()" :disabled="busy">
+          <i class="ti ti-table mr-1.5"></i>
+          <span class="truncate" x-text="matrixFileName || 'Expression matrix (samples × genes)'"></span>
+        </button>
+
+        {# File 2: sample metadata (sample_id, group) #}
+        <input type="file" accept=".csv,.tsv,.txt" class="hidden" x-ref="metadata"
+               @change="onMetadataFile($event)">
+        <button class="w-full mb-3 inline-flex items-center justify-center text-xs border border-gray-300 rounded px-2 py-1.5 hover:border-gray-500 transition"
+                @click="$refs.metadata.click()" :disabled="busy">
+          <i class="ti ti-list-details mr-1.5"></i>
+          <span class="truncate" x-text="metadataFileName || 'Sample metadata (sample_id, group)'"></span>
+        </button>
+
+        <button class="gc-btn-primary inline-flex items-center text-xs" @click="uploadMatrix()" :disabled="!canUploadMatrix">
+          <i class="ti ti-folder-open mr-1"></i>
+          <span x-text="busy && busyKind==='upload' ? 'Uploading…' : 'Load matrix'"></span>
+        </button>
+      </div>
+
+      {# Example dataset card — radio selector for synthetic or TCGA-BRCA #}
+      <div class="bg-white border border-gray-300 rounded px-4 pt-6 pb-8 text-center transition hover:border-gray-500">
+        <div class="w-12 h-12 mx-auto mb-2.5 rounded flex items-center justify-center text-xl"
+             style="background: var(--bg-inset); color: var(--text-muted);">
+          <i class="ti ti-database"></i>
+        </div>
+        <h3 class="text-sm font-semibold text-gray-900 mb-3">Example dataset</h3>
+
+        {# Radio group — everything centered #}
+        <div class="space-y-2 mb-4">
+          <label class="flex items-center justify-center gap-2 cursor-pointer p-1.5 rounded hover:bg-gray-50">
+            <input type="radio" name="example" value="synthetic"
+                   x-model="exampleChoice"
+                   class="accent-gray-700 flex-shrink-0" :disabled="busy">
+            <div>
+              <div class="text-xs font-medium text-gray-900">Simulated Expression Data</div>
+              <div class="text-[10px] text-gray-500 leading-tight">30-gene sample-level matrix (stimulated vs control) for a quick end-to-end run.</div>
+            </div>
+          </label>
+          <label class="flex items-center justify-center gap-2 cursor-pointer p-1.5 rounded hover:bg-gray-50">
+            <input type="radio" name="example" value="tcga_brca"
+                   x-model="exampleChoice"
+                   class="accent-gray-700 flex-shrink-0" :disabled="busy">
+            <div>
+              <div class="text-xs font-medium text-gray-900">Real Expression Data</div>
+              <div class="text-[10px] text-gray-500 leading-tight">TCGA-BRCA · tumor vs normal samples</div>
+            </div>
+          </label>
+        </div>
+
+        <div>
+          <button class="gc-btn-primary inline-flex items-center text-xs" @click="loadExample()" :disabled="busy">
+            <i class="ti ti-player-play mr-1"></i>
+            <span x-text="busy && busyKind==='example' ? 'Loading…' : 'Load selected'"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# Loaded-data summary — shown after upload/example loaded #}
+  <div x-show="dataLoaded" x-cloak class="max-w-[900px] mx-auto mt-8">
+
+    {# Warning / note banner (raw counts, DEG-only fallback, etc.) #}
+    <div x-show="warning" x-cloak class="mb-4">
+      <div class="bg-amber-50 border border-amber-200 rounded-lg p-3.5 flex gap-3">
+        <i class="ti ti-alert-triangle text-amber-600 text-lg flex-shrink-0"></i>
+        <p class="text-xs text-amber-800 leading-relaxed" x-text="warning"></p>
+      </div>
+    </div>
+
+    {# Matrix mode: samples × genes + the two compared groups #}
+    <template x-if="dataMode === 'expression_matrix'">
+      <div>
+        <div class="gc-section-label">Loaded expression matrix</div>
+        <div class="gc-card p-5 grid grid-cols-3 gap-4">
+          <div>
+            <div class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Samples</div>
+            <div class="text-lg text-gray-900 tabular-nums" x-text="nSamples"></div>
+          </div>
+          <div>
+            <div class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Genes</div>
+            <div class="text-lg text-gray-900 tabular-nums" x-text="nGenes"></div>
+          </div>
+          <div>
+            <div class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Comparison</div>
+            <div class="text-sm text-gray-900">
+              <span class="font-semibold" x-text="groupA"></span>
+              <span x-show="nGroupA" class="text-gray-400" x-text="`(${nGroupA})`"></span>
+              <span class="text-gray-400 mx-1">vs</span>
+              <span class="font-semibold" x-text="groupB"></span>
+              <span x-show="nGroupB" class="text-gray-400" x-text="`(${nGroupB})`"></span>
+            </div>
+          </div>
+        </div>
+        <p class="text-xs text-gray-500 mt-2"><span x-text="filename"></span></p>
+      </div>
+    </template>
+
+    {# Legacy deg_table fallback: column mapping (only if a DEG-table session
+       was restored — the upload UI no longer produces this). #}
+    <template x-if="dataMode === 'deg_table'">
+      <div>
+        <div class="gc-section-label">Column mapping</div>
+        <div class="gc-card p-5 grid grid-cols-3 gap-4">
+          <div>
+            <div class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Gene symbol</div>
+            <div class="text-sm text-gray-900" x-text="mapping.g_col || '—'"></div>
+          </div>
+          <div>
+            <div class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">P-value</div>
+            <div class="text-sm text-gray-900" x-text="mapping.p_col || '—'"></div>
+          </div>
+          <div>
+            <div class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Log2 fold change</div>
+            <div class="text-sm text-gray-900" x-text="mapping.fc_col || '—'"></div>
+          </div>
+        </div>
+        <p class="text-xs text-gray-500 mt-2"><span x-text="filename"></span> · <span x-text="rows"></span> rows · DEG-table mode (only Traditional DEG available)</p>
+      </div>
+    </template>
+  </div>
+
+  {# Format info + requirements #}
+  <div class="max-w-[900px] mx-auto mt-8">
+    <div class="gc-card-soft p-5">
+      <div class="flex items-start gap-3.5">
+        <div class="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 text-xl flex-shrink-0">
+          <i class="ti ti-info-circle"></i>
+        </div>
+        <div class="flex-1">
+          <div class="text-sm font-semibold text-gray-900 mb-2">What to provide</div>
+          <div class="grid grid-cols-3 gap-4">
+            <div>
+              <div class="text-xs font-semibold text-gray-700 mb-1">Expression matrix</div>
+              <div class="text-[11px] text-gray-500">Samples × genes. First column = sample id, remaining columns = genes (log-normalized values).</div>
+            </div>
+            <div>
+              <div class="text-xs font-semibold text-gray-700 mb-1">Sample metadata</div>
+              <div class="text-[11px] text-gray-500">One row per sample: a sample-id column and a group column (e.g. tumor / normal).</div>
+            </div>
+            <div>
+              <div class="text-xs font-semibold text-gray-700 mb-1">Two groups</div>
+              <div class="text-[11px] text-gray-500">≥ 2 samples per group so the model can learn which genes separate them.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="grid grid-cols-3 gap-3 mt-4">
+      <div class="gc-card p-4 flex items-center gap-3">
+        <div class="w-8 h-8 bg-emerald-50 text-emerald-500 rounded-lg flex items-center justify-center"><i class="ti ti-table"></i></div>
+        <div><div class="text-xs font-semibold">Expression matrix</div><div class="text-[11px] text-gray-500">Samples × genes (CSV/TSV/TXT)</div></div>
+      </div>
+      <div class="gc-card p-4 flex items-center gap-3">
+        <div class="w-8 h-8 bg-indigo-50 text-indigo-500 rounded-lg flex items-center justify-center"><i class="ti ti-list-details"></i></div>
+        <div><div class="text-xs font-semibold">Sample metadata</div><div class="text-[11px] text-gray-500">sample_id + group column</div></div>
+      </div>
+      <div class="gc-card p-4 flex items-center gap-3">
+        <div class="w-8 h-8 bg-amber-50 text-amber-500 rounded-lg flex items-center justify-center"><i class="ti ti-dna"></i></div>
+        <div><div class="text-xs font-semibold">Two groups</div><div class="text-[11px] text-gray-500">e.g. tumor vs normal</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Action bar #}
+<div class="gc-actionbar">
+  <span></span>
+  <button class="gc-btn-primary" :disabled="!dataLoaded" @click="next()">
+    Continue <i class="ti ti-arrow-right ml-1.5"></i>
+  </button>
+</div>
+</div>{# end x-data="step1" wrapper #}
+{% endblock %}

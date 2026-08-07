@@ -1,0 +1,1 @@
+"""GeneCurator backend package."""

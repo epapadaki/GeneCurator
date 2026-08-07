@@ -1,0 +1,500 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="docs-page grid grid-cols-[240px_1fr] min-h-[600px]">
+
+  {# ===== SIDEBAR NAVIGATION ===== #}
+  <aside class="py-8 px-6 border-r"
+         style="border-color: var(--border); background: var(--bg-card-soft); position: sticky; top: 0; height: fit-content;">
+    <div class="gc-section-label mb-4">Documentation</div>
+    <nav class="space-y-1">
+      <a href="#about" class="docs-nav-link">1 · About</a>
+      <a href="#usage" class="docs-nav-link">2 · How to use</a>
+      <div class="pl-4 space-y-0.5 mt-1 mb-2">
+        <a href="#usage-step1" class="docs-nav-sublink">Step 1 — Upload</a>
+        <a href="#usage-step2" class="docs-nav-sublink">Step 2 — Method</a>
+        <a href="#usage-step3" class="docs-nav-sublink">Step 3 — Curate</a>
+        <a href="#usage-step4" class="docs-nav-sublink">Step 4 — Results</a>
+      </div>
+      <a href="#methods" class="docs-nav-link">3 · Methods</a>
+      <a href="#data" class="docs-nav-link">4 · Data requirements</a>
+      <a href="#case-study" class="docs-nav-link">5 · Case study</a>
+      <a href="#contact" class="docs-nav-link">Contact</a>
+    </nav>
+  </aside>
+
+  {# ===== CONTENT ===== #}
+  <div class="py-10 px-12 max-w-[820px]" style="line-height: 1.7;">
+
+    {# Page title #}
+    <div class="mb-10">
+      <div style="font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); font-weight: 500;">
+        Documentation
+      </div>
+      <h1 class="text-[28px] mt-1 mb-2" style="font-weight: 500; letter-spacing: -0.02em; color: var(--text-strong);">
+        GeneCurator: Human-in-the-Loop Gene Selector
+      </h1>
+      <p class="text-[13.5px]" style="color: var(--text-muted);">
+        A reference guide covering the tool's purpose, workflow, and methods.
+      </p>
+    </div>
+
+    {# ==================== ABOUT ==================== #}
+    <section id="about" class="mb-12 scroll-mt-6">
+      <h2 class="docs-h2">1 · About</h2>
+      <p class="docs-p">
+        GeneCurator is a web-based analytical framework for gene panel
+        selection from differential expression data, developed to bridge
+        the gap between fully automated feature selection and manual
+        expert curation. The tool implements a wizard-based workflow in
+        which unsupervised and supervised algorithms first propose a
+        candidate gene set, and the domain expert then refines that
+        selection through evidence-informed inclusion or exclusion of
+        individual genes.
+      </p>
+      <p class="docs-p">
+        The motivation for this design stems from a well-documented
+        limitation of purely algorithmic feature selection in
+        transcriptomic studies: statistical ranking, while reproducible,
+        does not integrate the biological context that shapes a
+        defensible gene panel. Expression signatures dominated by highly
+        variable but functionally redundant transcripts (e.g.,
+        immunoglobulin variable regions in tumor-infiltrating B-cell
+        contexts) can obscure the smaller set of biologically actionable
+        targets. Conversely, purely manual curation is time-consuming,
+        inconsistent between reviewers, and difficult to reproduce.
+        GeneCurator's human-in-the-loop paradigm preserves the
+        reproducibility of algorithmic ranking while exposing the
+        ranking to structured human oversight at each decision point.
+      </p>
+      <p class="docs-p">
+        The application is intended for exploratory analysis of
+        differential expression outputs from bulk RNA-seq, microarray,
+        or pseudo-bulk single-cell RNA-seq experiments. It is not a
+        diagnostic instrument and its outputs should not be used to
+        guide clinical decision-making.
+      </p>
+    </section>
+
+    {# ==================== HOW TO USE ==================== #}
+    <section id="usage" class="mb-12 scroll-mt-6">
+      <h2 class="docs-h2">2 · How to use</h2>
+
+      <div id="usage-step1" class="mb-8 scroll-mt-6">
+        <h3 class="docs-h3">Step 1 — Upload your data</h3>
+        <p class="docs-p">
+          Prepare a differential expression table in CSV, TSV, or plain
+          text format. The table must contain at minimum three columns:
+          a gene identifier (HGNC symbol or Ensembl ID), a p-value, and
+          a log2 fold change. Additional columns (adjusted p-values,
+          base mean expression, etc.) are preserved but not required.
+        </p>
+        <p class="docs-p">
+          Drop the file into the upload panel or use the file browser.
+          The tool auto-detects the delimiter and column types. After
+          loading, confirm the column mapping — the three dropdowns let
+          you specify which columns hold the gene symbol, p-value, and
+          log2 fold change. To try the workflow without your own data,
+          use "Load toy dataset" to begin with a small immune-axis
+          example.
+        </p>
+        <p class="docs-p">
+          Once the file is loaded and the columns are mapped, press
+          <em>Continue</em>.
+        </p>
+      </div>
+
+      <div id="usage-step2" class="mb-8 scroll-mt-6">
+        <h3 class="docs-h3">Step 2 — Choose a feature selection method</h3>
+        <p class="docs-p">
+          Seven algorithms are available. The choice depends on your
+          statistical assumptions and downstream goal:
+        </p>
+        <ul class="docs-ul">
+          <li><strong>Traditional DEG (Volcano)</strong> — hard thresholds on p-value and |log2FC|. Best when you have well-calibrated statistics and a specific biological effect size in mind.</li>
+          <li><strong>Random Forest (Ensemble)</strong> — tree-based importance scoring. Robust to noise, handles non-linear relationships, no distributional assumptions.</li>
+          <li><strong>Gradient Boosting</strong> — XGBoost-style boosted trees. Slightly higher variance than Random Forest but often better on subtle signals.</li>
+          <li><strong>SHAP Ranking</strong> — Shapley value attribution over a boosted-tree model. Gives per-gene importance decomposed by contribution to the classifier.</li>
+          <li><strong>LASSO</strong> — L1-regularized regression. Yields sparse, interpretable coefficient-based selection.</li>
+          <li><strong>Mutual Information</strong> — non-parametric dependence measure between each gene and the direction label.</li>
+          <li><strong>Correlation Ranking</strong> — Spearman rank correlation with direction. Simple, fast baseline.</li>
+        </ul>
+        <p class="docs-p">
+          Set the number of top genes to select (default 50) or the
+          p-value and log2FC thresholds if you chose Traditional DEG.
+          Then press <em>Run feature selection</em>. Depending on the
+          dataset size, execution takes between a few seconds and a
+          couple of minutes.
+        </p>
+      </div>
+
+      <div id="usage-step3" class="mb-8 scroll-mt-6">
+        <h3 class="docs-h3">Step 3 — Curate the algorithm's picks</h3>
+        <p class="docs-p">
+          The algorithm's selected genes appear in a ranked table on the
+          left. Click a row to load its details in the Gene Inspector on
+          the right. The inspector shows the gene's log2FC, p-value,
+          importance score, and — if the UniProt proteome table has
+          been loaded — protein function summary and known disease
+          associations.
+        </p>
+        <p class="docs-p">
+          Untick the checkbox next to a gene to remove it from the final
+          panel. Re-tick to restore. To add a gene that the algorithm
+          did not pick (e.g., a gene the literature strongly supports
+          for your biological question), use the Gene Inspector dropdown
+          to select the symbol and press <em>Add to panel</em>.
+        </p>
+        <p class="docs-p">
+          The counts strip at the top tracks how far your curated panel
+          has diverged from the algorithm's original picks. Press <em>View
+          results</em> when the panel is complete.
+        </p>
+      </div>
+
+      <div id="usage-step4" class="scroll-mt-6">
+        <h3 class="docs-h3">Step 4 — Interpret the results</h3>
+        <p class="docs-p">Four analysis tabs are available:</p>
+        <ul class="docs-ul">
+          <li><strong>Discovery summary</strong> — volcano plot of the full dataset with curated panel genes highlighted, plus a table of the top-ranked discoveries.</li>
+          <li><strong>PPI network</strong> — protein-protein interaction graph among the curated genes, built from the STRING database. Isolated nodes indicate genes without catalogued interactions in the panel context.</li>
+          <li><strong>Enrichment</strong> — functional over-representation analysis of the panel against fifteen gene set libraries organized into five categories: pathways, ontology, diseases, cell types, and drugs. For KEGG results, click "map" next to any term to view the official KEGG pathway diagram with your genes colored by log2FC direction.</li>
+          <li><strong>Log2FC profile</strong> — magnitude distribution of the curated panel, useful for detecting one-directional signatures (e.g., predominantly down-regulated panels).</li>
+        </ul>
+        <p class="docs-p">
+          Export options are provided at the bottom of the results page:
+          an Excel workbook containing all analysis results and metadata,
+          or a plain CSV of the final panel for use in downstream tools.
+        </p>
+      </div>
+    </section>
+
+    {# ==================== METHODS ==================== #}
+    <section id="methods" class="mb-12 scroll-mt-6">
+      <h2 class="docs-h2">3 · Methods</h2>
+
+      <div class="mb-6">
+        <h3 class="docs-h3">Feature selection</h3>
+        <p class="docs-p">
+          Supervised algorithms (Random Forest, Gradient Boosting, SHAP,
+          LASSO) treat gene expression direction (up- versus
+          down-regulated, or significant versus non-significant) as the
+          classification label and rank genes by their contribution to
+          the fitted model. Unsupervised approaches (Mutual Information,
+          Correlation Ranking) measure statistical dependence between
+          each gene and the direction label without fitting a model.
+          Traditional DEG applies hard thresholds directly. All
+          implementations use scikit-learn 1.4+ (Random Forest, LASSO,
+          Mutual Information), XGBoost 2.0+ (Gradient Boosting), and the
+          SHAP 0.44+ TreeExplainer for Shapley value computation.
+        </p>
+      </div>
+
+      <div class="mb-6">
+        <h3 class="docs-h3">Functional enrichment</h3>
+        <p class="docs-p">
+          Over-representation analysis is performed against fifteen
+          Enrichr-derived gene set libraries: KEGG 2026, Reactome 2024,
+          WikiPathways 2024, BioPlanet, MSigDB Hallmark 2020, GO
+          Biological Process / Molecular Function / Cellular Component
+          2026, DisGeNET, Disease Perturbations from GEO (up and down),
+          PanglaoDB Augmented 2021, DSigDB, and Drug Perturbations from
+          GEO (up and down). For each term, a one-sided Fisher's exact
+          test is applied, treating the union of genes annotated in that
+          library as the background universe. P-values are corrected for
+          multiple testing using the Benjamini-Hochberg procedure across
+          all terms within a library.
+        </p>
+      </div>
+
+      <div class="mb-6">
+        <h3 class="docs-h3">Protein-protein interaction network</h3>
+        <p class="docs-p">
+          The PPI subgraph is constructed by querying the STRING database
+          for interactions restricted to the curated panel genes,
+          retaining only edges with a combined confidence score above
+          0.4. The graph is rendered with a force-directed layout; nodes
+          without qualifying interactions are displayed as isolates.
+        </p>
+      </div>
+
+      <div class="mb-6">
+        <h3 class="docs-h3">KEGG pathway visualization</h3>
+        <p class="docs-p">
+          A local snapshot of the KEGG PATHWAY database (approximately
+          360 human pathway diagrams) was retrieved via the KEGG REST
+          API. When a KEGG term is expanded, the corresponding KGML file
+          is parsed to identify gene entries; the associated pathway PNG
+          is rendered with a semi-transparent colored overlay on each
+          gene box, red for up-regulated and blue for down-regulated,
+          with opacity scaled by the log2 fold change magnitude. The
+          snapshot date is displayed within the Enrichment tab.
+        </p>
+      </div>
+
+      <div>
+        <h3 class="docs-h3">Gene evidence integration</h3>
+        <p class="docs-p">
+          The Gene Inspector cross-references the reviewed panel against
+          a locally stored subset of the UniProt human reference proteome
+          (UniProtKB, release 2026_03). Retrieved fields include the
+          protein name, sequence length, canonical function annotation,
+          and disease involvement records. Absence of a UniProt record
+          is reported explicitly rather than silently suppressed.
+        </p>
+      </div>
+    </section>
+
+    {# ==================== DATA REQUIREMENTS ==================== #}
+    <section id="data" class="mb-12 scroll-mt-6">
+      <h2 class="docs-h2">4 · Data requirements</h2>
+
+      <div class="mb-6">
+        <h3 class="docs-h3">Input format</h3>
+        <p class="docs-p">
+          Accepted file extensions are .csv, .tsv, and .txt with a
+          single header row. The delimiter is auto-detected. Files up to
+          50 MB are supported; larger files should be pre-filtered
+          (e.g., restricted to expressed genes with mean count above a
+          low threshold) before upload.
+        </p>
+        <p class="docs-p">
+          The three required columns can carry any name and appear in
+          any position; column mapping is performed after upload.
+          Numeric columns must use a period as the decimal separator.
+          Missing values in the p-value or log2FC columns cause the
+          corresponding rows to be dropped during preprocessing.
+        </p>
+      </div>
+
+      <div class="mb-6">
+        <h3 class="docs-h3">Species and identifiers</h3>
+        <p class="docs-p">
+          All bundled gene set libraries and the UniProt reference
+          proteome are human. Non-human datasets can be uploaded and
+          analyzed algorithmically, but the enrichment, PPI, and Gene
+          Inspector components will not produce biologically meaningful
+          results. Gene identifiers should be provided as HGNC symbols
+          for optimal cross-referencing; Ensembl IDs are accepted but
+          may reduce the overlap with the Enrichr libraries, which are
+          distributed with symbol-based annotations.
+        </p>
+      </div>
+
+      <div>
+        <h3 class="docs-h3">Recommended dataset characteristics</h3>
+        <p class="docs-p">
+          The tool has been validated on differential expression tables
+          containing between 5,000 and 20,000 genes. Panels of 20-100
+          genes are typically produced by the default algorithm settings;
+          panels below 15 genes may yield underpowered enrichment
+          results, while panels above 200 genes tend to produce diffuse,
+          low-specificity enrichment signals.
+        </p>
+      </div>
+    </section>
+
+    {# ==================== CASE STUDY ==================== #}
+    <section id="case-study" class="mb-12 scroll-mt-6">
+      <h2 class="docs-h2">5 · Case study: TCGA-BRCA</h2>
+      <p class="docs-p">
+        The bundled case study uses The Cancer Genome Atlas breast
+        invasive carcinoma cohort (TCGA-BRCA) to illustrate the failure
+        mode that motivated the tool's development: purely
+        statistics-driven feature selection can produce panels that are
+        technically correct but biologically incomplete. The dataset
+        contains a tumor-versus-normal differential expression table
+        with approximately 15,000 genes, derived from ~400 primary
+        tumors and ~113 solid tissue normals using the DESeq2 workflow
+        on STAR-Counts. The R script used to regenerate the table is
+        distributed with the source code
+        (<code>data/prepare_brca_deg.R</code>).
+      </p>
+
+      <div class="mb-6">
+        <h3 class="docs-h3">The algorithm-only panel</h3>
+        <p class="docs-p">
+          Running Random Forest with the default top-50 setting produces
+          a panel dominated by two signatures. The first is proliferation
+          machinery — cell cycle regulators, mitotic spindle components,
+          DNA replication factors — including BIRC5, TOP2A, UBE2C, PLK1,
+          RRM2, AURKA/B, CDK1, CDC20, CENPF, KIF20A, and CCNB1/B2. These
+          are among the strongest-effect genes in almost every cancer
+          DEG table and reliably dominate any automated ranking. The
+          second signature comes from the loss of normal breast tissue
+          composition — milk proteins (CSN2, LALBA, CSN1S1, WAP) and
+          adipocyte markers (ADIPOQ, FABP4, PLIN1, LEP, CIDEA) — all
+          strongly down-regulated in the tumor cohort because tumor
+          tissue is not lactating adipose tissue.
+        </p>
+        <p class="docs-p">
+          This panel is statistically defensible. Every gene has a
+          Benjamini-Hochberg adjusted p-value well below 10<sup>−30</sup>.
+          A reviewer reading the enrichment results would see clear
+          hallmark signatures for G2/M Checkpoint, E2F Targets, and
+          Mitotic Spindle — the standard "this tumor is proliferating"
+          answer that applies to every solid cancer.
+        </p>
+      </div>
+
+      <div class="mb-6">
+        <h3 class="docs-h3">What the automated panel is missing</h3>
+        <p class="docs-p">
+          The canonical breast cancer biomarkers that inform every
+          clinical decision — ESR1 (estrogen receptor), PGR (progesterone
+          receptor), ERBB2 (HER2), FOXA1, GATA3, and BCL2 — are all
+          significantly differentially expressed with reasonable effect
+          sizes (log2 fold change 1.2 to 1.8, adjusted p-value below
+          10<sup>−7</sup>). However, they are not among the top 50 genes
+          selected by Random Forest because their absolute effect sizes
+          are dwarfed by the proliferation and stroma signals. In the
+          bundled case-study table they rank between positions 370
+          (ERBB2) and 610 (ESR1) — comfortably outside the automated
+          panel.
+        </p>
+        <p class="docs-p">
+          The clinical consequence of this omission is substantial.
+          These six genes underpin the commercial breast cancer
+          molecular assays (Oncotype DX, MammaPrint, PAM50), define
+          therapeutic decisions (endocrine therapy for ESR1-positive
+          disease, trastuzumab for ERBB2-amplified disease), and provide
+          the biological framework within which any breast cancer
+          hypothesis must be interpreted. A panel of 50 breast tumor
+          genes that omits these markers would be considered
+          incomplete by any oncologist, regardless of the statistical
+          rigor of the selection procedure.
+        </p>
+      </div>
+
+      <div class="mb-6">
+        <h3 class="docs-h3">Expert curation</h3>
+        <p class="docs-p">
+          Using the Expert Review interface, a domain expert removes
+          approximately fifteen genes from the algorithmic panel that
+          contribute redundant or biologically diffuse signal — several
+          immunoglobulin transcripts, the strongest adipocyte markers
+          (which reflect tissue composition rather than tumor biology),
+          and cell-cycle members whose function is already represented
+          by another selected gene. The expert then adds the six
+          canonical breast cancer markers (ESR1, PGR, ERBB2, FOXA1,
+          GATA3, BCL2), the tumor suppressor PTEN, the transcription
+          factor TP53, and the PI3K/AKT pathway member PIK3CA.
+        </p>
+        <p class="docs-p">
+          The resulting curated panel is smaller in nominal statistical
+          strength — several added genes have larger p-values than the
+          removed genes — but is substantially more coherent
+          biologically. The panel now represents four distinct axes of
+          breast cancer biology (hormone signaling, HER2 pathway,
+          proliferation, and tumor suppressor loss) rather than one
+          dominant axis (proliferation) with adjacent tissue changes.
+        </p>
+      </div>
+
+      <div>
+        <h3 class="docs-h3">Downstream comparison</h3>
+        <p class="docs-p">
+          Functional enrichment against the KEGG 2026 library shifts
+          from generic proliferation and cancer terms (Cell Cycle,
+          p53 Signaling, Pathways in Cancer) to a clearly
+          tissue-specific profile that now includes Breast Cancer
+          (hsa05224) and Estrogen Signaling (hsa04915) with substantially
+          improved false discovery rates. Enrichment against MSigDB
+          Hallmark loses none of the proliferation signal (G2/M
+          Checkpoint, E2F Targets remain enriched) but gains estrogen
+          response signatures (Estrogen Response Early and Late) that
+          were absent from the algorithmic panel. The PPI network
+          becomes measurably more connected, with the hormone receptor
+          axis forming a dense subgraph around ESR1 that is absent from
+          the algorithm-only version. The KEGG pathway map for Breast
+          Cancer (hsa05224), which was inactive in the algorithmic
+          panel, now displays 8 of 12 signature nodes colored by
+          log2FC direction.
+        </p>
+        <p class="docs-p">
+          The comparison demonstrates the two-part argument for
+          human-in-the-loop feature selection made in this work.
+          Automated feature selection is a valuable filter — it
+          identified 47 of the 50 proliferation-associated genes that
+          the expert retained in the final panel — but it is not
+          sufficient on its own. Expert curation restores biologically
+          essential axes that pure statistics cannot see, and the
+          combination is materially better than either component alone.
+        </p>
+      </div>
+    </section>
+
+    {# ==================== CONTACT ==================== #}
+    <section id="contact" class="mb-6 scroll-mt-6">
+      <h2 class="docs-h2">Contact</h2>
+      <p class="docs-p">
+        <strong>Evgenia Papadaki</strong><br>
+        Bioinformatics and Human Electrophysiology Laboratory (BiHELab)<br>
+        Department of Informatics, Ionian University, Corfu, Greece<br>
+        <a href="mailto:epapadaki@ionio.gr" style="color: var(--brand-500);">epapadaki@ionio.gr</a>
+      </p>
+    </section>
+
+  </div>
+</div>
+
+<style>
+/* Docs page styles — kept inline so they don't need a Tailwind rebuild
+   just to add or tweak the docs page. */
+.docs-h2 {
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--text-strong);
+  letter-spacing: -0.015em;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.docs-h3 {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-strong);
+  margin-bottom: 10px;
+  margin-top: 4px;
+}
+.docs-p {
+  font-size: 13.5px;
+  color: var(--text-body);
+  margin-bottom: 12px;
+}
+.docs-ul {
+  font-size: 13.5px;
+  color: var(--text-body);
+  margin-bottom: 12px;
+  padding-left: 20px;
+  list-style-type: disc;
+}
+.docs-ul li { margin-bottom: 6px; }
+.docs-nav-link {
+  display: block;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text-body);
+  text-decoration: none;
+  border-radius: 3px;
+  transition: background 0.15s ease;
+}
+.docs-nav-link:hover {
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+.docs-nav-sublink {
+  display: block;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-decoration: none;
+  border-radius: 3px;
+  transition: background 0.15s ease;
+}
+.docs-nav-sublink:hover {
+  background: var(--bg-hover);
+  color: var(--text-body);
+}
+.scroll-mt-6 { scroll-margin-top: 24px; }
+</style>
+{% endblock %}
