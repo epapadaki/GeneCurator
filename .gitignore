@@ -216,3 +216,27 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---- GeneCurator: local secrets and downloaded reference data ----
+.env
+*.bak*
+*.part
+kegg_data/
+frontend/static/css/fonts/*.woff2
+# Enrichr gene-set libraries (downloaded by setup_data.py)
+KEGG_*.txt
+Reactome_*.txt
+WikiPathways_*.txt
+BioPlanet_*.txt
+MSigDB_*.txt
+GO_*.txt
+DisGeNET.txt
+Disease_Perturbations_*.txt
+Drug_Perturbations_*.txt
+PanglaoDB_*.txt
+DSigDB.txt
+# Raw TCGA downloads, scratch copies and R workspaces
+data/TCGA_BRCA_scaffold_backup.tsv
+GDCdata/
+*.rds
+!.env.example

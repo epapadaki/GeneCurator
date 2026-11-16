@@ -6,6 +6,8 @@ is sufficient. The Session dataclass holds exactly the fields the original
 Streamlit app's st.session_state held.
 """
 
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 from uuid import uuid4
@@ -70,18 +72,47 @@ class Session:
 
 
 # Module-level store — single-process, in-memory. One entry per browser session.
+# Each session can hold a full expression matrix, so on a shared server idle
+# sessions are dropped after SESSION_TTL seconds and at most MAX_SESSIONS are
+# kept (empty ones, then the least recently used, go first). The browser cookie lasts 24 h.
+SESSION_TTL = 24 * 60 * 60
+MAX_SESSIONS = 200
+
 _SESSIONS: Dict[str, Session] = {}
+_LAST_SEEN: Dict[str, float] = {}
+_LOCK = threading.Lock()
+
+
+def _evict(now: float) -> None:
+    for sid in [s for s, t in _LAST_SEEN.items() if now - t > SESSION_TTL]:
+        _SESSIONS.pop(sid, None)
+        _LAST_SEEN.pop(sid, None)
+    while len(_SESSIONS) > MAX_SESSIONS:
+        # Drop sessions that never loaded data first (e.g. visits by crawlers),
+        # so they cannot push out someone who is in the middle of an analysis.
+        empty = [s for s in _SESSIONS if _SESSIONS[s].df_raw is None and _SESSIONS[s].expr_matrix is None]
+        pool = empty or list(_SESSIONS)
+        oldest = min(pool, key=lambda s: _LAST_SEEN.get(s, 0))
+        _SESSIONS.pop(oldest, None)
+        _LAST_SEEN.pop(oldest, None)
 
 
 def get_or_create(session_id: Optional[str]) -> tuple[str, Session]:
     """Return (session_id, Session). Creates a new session if needed."""
-    if session_id and session_id in _SESSIONS:
-        return session_id, _SESSIONS[session_id]
-    new_id = str(uuid4())
-    _SESSIONS[new_id] = Session()
-    return new_id, _SESSIONS[new_id]
+    now = time.time()
+    with _LOCK:
+        if session_id and session_id in _SESSIONS:
+            _LAST_SEEN[session_id] = now
+            return session_id, _SESSIONS[session_id]
+        new_id = str(uuid4())
+        _SESSIONS[new_id] = Session()
+        _LAST_SEEN[new_id] = now
+        _evict(now)
+        return new_id, _SESSIONS[new_id]
 
 
 def reset(session_id: str) -> None:
     """Drop a session — used by the 'New analysis' / restart action."""
-    _SESSIONS.pop(session_id, None)
+    with _LOCK:
+        _SESSIONS.pop(session_id, None)
+        _LAST_SEEN.pop(session_id, None)

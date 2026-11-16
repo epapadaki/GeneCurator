@@ -9,7 +9,7 @@ authors:
   - family-names: "Vrahatis"
     given-names: "Aristidis G."
     affiliation: "Ionian University"
-version: "1.0.0"
+version: "1.1.0"
 license: "MIT"
 repository-code: "https://github.com/epapadaki/GeneCurator"
 keywords:
@@ -18,3 +18,15 @@ keywords:
   - human-in-the-loop
   - functional enrichment
   - RNA-seq
+preferred-citation:
+  type: article
+  title: "GeneCurator: a human-in-the-loop web application for constructing and curating gene panels from expression data"
+  authors:
+    - family-names: "Papadaki"
+      given-names: "Eugenia"
+    - family-names: "Vrahatis"
+      given-names: "Aristidis G."
+  journal: "Computational Biology and Chemistry"
+  volume: 126
+  start: 109471
+  doi: "10.1016/j.compbiolchem.2026.109471"

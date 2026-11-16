@@ -13,7 +13,11 @@ This repository accompanies the paper:
 
 > Papadaki, E. and Vrahatis, A.G. *GeneCurator: a human-in-the-loop web
 > application for constructing and curating gene panels from expression data.*
-> Computational Biology and Chemistry. [DOI when available]
+> Computational Biology and Chemistry 126, 109471.
+> https://doi.org/10.1016/j.compbiolchem.2026.109471
+>
+> The version described in the paper is release
+> [v1.0.0](https://github.com/epapadaki/GeneCurator/releases/tag/v1.0.0).
 
 ---
 
@@ -34,43 +38,50 @@ This repository accompanies the paper:
 ## Requirements
 
 - Python >= 3.10
-- Dependencies listed in `requirements.txt` / `pyproject.toml`
-  (FastAPI, uvicorn, pandas, numpy, scikit-learn, shap, plotly, networkx,
-  graphviz, openpyxl, jinja2).
+- Graphviz (the `dot` program), used to draw the pipeline diagrams
+- The Python packages in `requirements.txt` (FastAPI, uvicorn, pandas, numpy,
+  scikit-learn, shap, plotly, networkx, graphviz, openpyxl, jinja2)
 
 ## Installation
 
+With conda (Linux, macOS, Windows), which also installs Graphviz:
+
 ```bash
-git clone https://github.com/<username>/GeneCurator.git
+git clone https://github.com/epapadaki/GeneCurator.git
 cd GeneCurator
-
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# macOS / Linux:
-source .venv/bin/activate
-
+conda create -n genecurator -c conda-forge python=3.12 graphviz
+conda activate genecurator
 pip install -r requirements.txt
 ```
 
-## Reference data (one-time download)
+Without conda, install Graphviz from <https://graphviz.org/download/>
+(Linux: `sudo apt install graphviz`) and then, in a virtual environment,
+`pip install -r requirements.txt`.
 
-The large reference databases are **not** stored in this repository. Download
-them once with the provided scripts:
+## Reference data
+
+Included in the repository (`data/` and the project folder): the TCGA-BRCA
+case study (expression matrix, sample groups, DEG table), the CellTalkDB human
+ligand–receptor pairs, the STRING v12.0 interactions (combined score ≥ 700)
+and the UniProt human reference proteome (UP000005640, release 2026_03_30).
+
+The rest is downloaded once with one command:
 
 ```bash
-# STRING v12.0 protein-protein interactions (high-confidence, score >= 700)
-python download_ppi_assets.py
-
-# KEGG pathway maps (PNG + KGML), ~50 MB, ~15 min
-python download_kegg_assets.py
+python setup_data.py              # about 20 minutes, mostly the KEGG maps
+python setup_data.py --skip-kegg  # without the KEGG pathway maps
 ```
 
-The enrichment gene-set libraries (KEGG, Reactome, WikiPathways, BioPlanet,
-MSigDB Hallmark, GO BP/MF/CC, DisGeNET, Disease Perturbations, PanglaoDB) and
-the UniProt human reference proteome (UP000005640) are expected in the project
-root as Enrichr-format `.txt` files and a `.tsv`, respectively. See
-Data sources below for where to obtain them.
+| Data | Source |
+|---|---|
+| 16 gene-set libraries (KEGG, Reactome, WikiPathways, BioPlanet, MSigDB Hallmark, GO BP/MF/CC, DisGeNET, Disease/Drug Perturbations from GEO, PanglaoDB, DSigDB) | Enrichr |
+| KEGG pathway maps (PNG + KGML) | KEGG REST API |
+| IBM Plex Sans font | @fontsource (SIL Open Font License) |
+
+Re-running the script skips files that are already present. The gene-set
+libraries and the KEGG maps are downloaded from their providers rather than
+redistributed, because some of their licences do not allow redistribution.
+`download_ppi_assets.py` rebuilds the STRING snapshot from STRING itself.
 
 ## Running
 
@@ -78,13 +89,22 @@ Data sources below for where to obtain them.
 python run.py
 ```
 
-This starts the FastAPI server on `http://localhost:8000` and opens the
-browser. Then follow the four-step workflow:
+This starts GeneCurator on <http://127.0.0.1:8000> and opens the browser.
+To serve it to other computers (e.g. on a server):
 
-1. **Load** an expression matrix and a sample-metadata table.
+```bash
+HOST=0.0.0.0 PORT=8020 python run.py
+```
+
+Then follow the four-step workflow:
+
+1. **Load** an expression matrix and a sample-metadata table, or the TCGA-BRCA case study.
 2. **Select** a feature-selection method to produce a ranked panel.
 3. **Curate** the panel - remove or reinstate genes with supporting evidence.
 4. **Analyse** - the downstream results recompute on the current panel.
+
+The optional AI assistant needs a Gemini API key: copy `.env.example` to
+`.env` and fill in `GEMINI_API_KEY`. The `.env` file is never committed.
 
 ## Input format
 
@@ -97,6 +117,8 @@ browser. Then follow the four-step workflow:
 The case study uses publicly available data from The Cancer Genome Atlas
 Breast Invasive Carcinoma (TCGA-BRCA) project, obtained through the NCI Genomic
 Data Commons Data Portal (https://portal.gdc.cancer.gov).
+`data/prepare_brca_deg.R` reproduces the case-study files from the GDC
+download.
 
 Reference resources and their citations:
 

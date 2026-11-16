@@ -16,13 +16,29 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-# python-dotenv loads .env into environment. Silent-fail if not installed
-# (we'll enforce it via requirements.txt but keep the import defensive).
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+# Load PROJECT_ROOT/.env into the environment, whichever folder the server is
+# started from. python-dotenv is used when installed; otherwise the simple
+# KEY=value lines are read directly. Variables already set are not overridden.
+def _load_env_file() -> None:
+    from pathlib import Path
+    env_file = Path(__file__).resolve().parent.parent / ".env"
+    if not env_file.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(env_file)
+        return
+    except ImportError:
+        pass
+    for line in env_file.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+_load_env_file()
 
 
 # ---------- data classes -----------------------------------------------------
