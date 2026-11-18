@@ -1052,9 +1052,6 @@ def api_recommend_algorithm(session: Optional[str] = Cookie(None, alias=SESSION_
 
 @app.get("/api/enrichment/status")
 def api_enrichment_status(session: Optional[str] = Cookie(None, alias=SESSION_COOKIE)):
-    """Report which of the 12 libraries are available on disk, and whether
-    the local KEGG PNG/KGML snapshot is present. The frontend uses this on
-    Step 4 to decide which sub-tabs to show."""
     sid, _ = _session(session)
     avail = enrichment.available_libraries(ENRICHR_DIR)
     resp = JSONResponse({
