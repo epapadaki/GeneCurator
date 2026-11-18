@@ -29,7 +29,7 @@ This repository accompanies the paper:
 - Interactive curation with per-gene evidence from a local UniProt reference;
   changes are logged and reversible.
 - Downstream analyses recomputed on the current panel:
-  - Functional over-representation analysis against 12 gene-set libraries.
+  - Functional over-representation analysis against 15 gene-set libraries.
   - KEGG pathway maps with panel genes highlighted and coloured by log2 fold change.
   - Protein-protein interaction networks from a local STRING v12.0 snapshot.
   - Ligand-receptor annotation from CellTalkDB.
@@ -74,7 +74,7 @@ python setup_data.py --skip-kegg  # without the KEGG pathway maps
 
 | Data | Source |
 |---|---|
-| 16 gene-set libraries (KEGG, Reactome, WikiPathways, BioPlanet, MSigDB Hallmark, GO BP/MF/CC, DisGeNET, Disease/Drug Perturbations from GEO, PanglaoDB, DSigDB) | Enrichr |
+| 15 gene-set libraries (KEGG, Reactome, WikiPathways, BioPlanet, MSigDB Hallmark, GO BP/MF/CC, DisGeNET, Disease/Drug Perturbations from GEO, PanglaoDB, DSigDB) | Enrichr |
 | KEGG pathway maps (PNG + KGML) | KEGG REST API |
 | IBM Plex Sans font | @fontsource (SIL Open Font License) |
 
